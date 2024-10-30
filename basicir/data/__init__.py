@@ -6,9 +6,9 @@ import torch.utils.data
 from functools import partial
 from os import path as osp
 
-from waterformer.data.prefetch_dataloader import PrefetchDataLoader
-from waterformer.utils import get_root_logger, scandir
-from waterformer.utils.dist_util import get_dist_info
+from basicir.data.prefetch_dataloader import PrefetchDataLoader
+from basicir.utils import get_root_logger, scandir
+from basicir.utils.dist_util import get_dist_info
 
 __all__ = ['create_dataset', 'create_dataloader']
 
@@ -21,7 +21,7 @@ dataset_filenames = [
 ]
 # import all the dataset modules
 _dataset_modules = [
-    importlib.import_module(f'waterformer.data.{file_name}')
+    importlib.import_module(f'basicir.data.{file_name}')
     for file_name in dataset_filenames
 ]
 

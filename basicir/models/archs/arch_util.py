@@ -5,7 +5,7 @@ from torch.nn import functional as F
 from torch.nn import init as init
 from torch.nn.modules.batchnorm import _BatchNorm
 
-from waterformer.utils import get_root_logger
+from basicir.utils import get_root_logger
 
 
 @torch.no_grad()

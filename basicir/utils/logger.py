@@ -88,7 +88,7 @@ def init_tb_logger(log_dir):
 def init_wandb_logger(opt):
     """We now only use wandb to sync tensorboard log."""
     import wandb
-    logger = logging.getLogger('waterformer')
+    logger = logging.getLogger('basicir')
 
     project = opt['logger']['wandb']['project']
     resume_id = opt['logger']['wandb'].get('resume_id')
@@ -100,12 +100,12 @@ def init_wandb_logger(opt):
         wandb_id = wandb.util.generate_id()
         resume = 'never'
 
-    wandb.init(id=wandb_id, resume=resume, name=opt['name'], config=opt, project=project, sync_tensorboard=True)
+    wandb.init(id=wandb_id, resume=resume, name=opt['name'].lower(), config=opt, project=project, sync_tensorboard=True)
 
     logger.info(f'Use wandb logger with id={wandb_id}; project={project}.')
 
 
-def get_root_logger(logger_name='waterformer', log_level=logging.INFO, log_file=None):
+def get_root_logger(logger_name='basicir', log_level=logging.INFO, log_file=None):
     """Get the root logger.
 
     The logger will be initialized if it has not been initialized. By default a
@@ -113,7 +113,7 @@ def get_root_logger(logger_name='waterformer', log_level=logging.INFO, log_file=
     also be added.
 
     Args:
-        logger_name (str): root logger name. Default: 'waterformer'.
+        logger_name (str): root logger name. Default: 'basicir'.
         log_file (str | None): The log filename. If specified, a FileHandler
             will be added to the root logger.
         log_level (int): The root logger level. Note that only the process of
@@ -155,7 +155,7 @@ def get_env_info():
     import torch
     import torchvision
 
-    from waterformer.version import __version__
+    from basicir.version import __version__
     msg = r"""
                 ____                _       _____  ____
                / __ ) ____ _ _____ (_)_____/ ___/ / __ \
@@ -169,7 +169,7 @@ def get_env_info():
   \____/ \____/ \____/ \____/  /_____/\____/ \___//_/|_|  (_)
     """
     msg += ('\nVersion Information: '
-            f'\n\twaterformer: {__version__}'
+            f'\n\timg_enh: {__version__}'
             f'\n\tPyTorch: {torch.__version__}'
             f'\n\tTorchVision: {torchvision.__version__}')
     return msg

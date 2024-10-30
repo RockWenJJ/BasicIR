@@ -1,9 +1,10 @@
 import importlib
 from os import path as osp
 
-from waterformer.utils import scandir
+from basicir.utils import scandir
 
 from .waterformer_arch import WaterFormer
+from .crossspaceformer_arch import CrossSpaceFormer
 
 # automatically scan and import arch modules
 # scan all the files under the 'archs' folder and collect files ending with
@@ -15,7 +16,7 @@ arch_filenames = [
 ]
 # import all the arch modules
 _arch_modules = [
-    importlib.import_module(f'waterformer.models.archs.{file_name}')
+    importlib.import_module(f'basicir.models.archs.{file_name}')
     for file_name in arch_filenames
 ]
 

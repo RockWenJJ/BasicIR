@@ -5,10 +5,10 @@ from collections import OrderedDict
 from copy import deepcopy
 from torch.nn.parallel import DataParallel, DistributedDataParallel
 
-from waterformer.models import lr_scheduler as lr_scheduler
-from waterformer.utils.dist_util import master_only
+from basicir.models import lr_scheduler as lr_scheduler
+from basicir.utils.dist_util import master_only
 
-logger = logging.getLogger('waterformer')
+logger = logging.getLogger('basicir')
 
 
 class BaseModel():

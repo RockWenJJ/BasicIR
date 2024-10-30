@@ -12,8 +12,8 @@ import argparse
 from pdb import set_trace as stx
 import numpy as np
 
-# from waterformer.train import parse_options
-from waterformer.utils.options import parse
+# from basicir.train import parse_options
+from basicir.utils.options import parse
 
 def load_img(filepath):
     return cv2.cvtColor(cv2.imread(filepath), cv2.COLOR_BGR2RGB)
@@ -22,8 +22,8 @@ def save_img(filepath, img):
     cv2.imwrite(filepath,cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Test WaterFormer on your own images.')
-    parser.add_argument('--opt', type=str, required=True, help='Path to the config file')
+    parser = argparse.ArgumentParser(description='Test Imge Enhancement on your own images.')
+    parser.add_argument('--config', type=str, required=True, help='Path to the config file')
     parser.add_argument('--checkpoint', type=str, required=True, help='Path to the checkpoint')
     parser.add_argument('--input-dir', default='./input', type=str, help='Input directory')
     parser.add_argument('--output-dir', default='./output', type=str, help='Output directory')
@@ -32,7 +32,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    opt = parse(args.opt, is_train=False)
+    opt = parse(args.config, is_train=False)
     checkpoint = args.checkpoint
     input_dir = args.input_dir
     output_dir = args.output_dir
@@ -55,7 +55,7 @@ if __name__ == "__main__":
     parameters = opt['network_g']
 
     arch_type = parameters.pop('type')
-    load_arch = run_path(f'./waterformer/models/archs/{arch_type.lower()}_arch.py')
+    load_arch = run_path(f'./basicir/models/archs/{arch_type.lower()}_arch.py')
     model = load_arch[arch_type](**parameters)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

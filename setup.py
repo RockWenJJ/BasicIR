@@ -10,7 +10,7 @@ import torch
 from torch.utils.cpp_extension import (BuildExtension, CppExtension,
                                        CUDAExtension)
 
-version_file = 'waterformer/version.py'
+version_file = 'basicir/version.py'
 
 
 def readme():
@@ -47,17 +47,20 @@ def get_git_hash():
 
 def get_hash():
     if os.path.exists('.git'):
-        sha = get_git_hash()[:7]
+        try:
+            sha = get_git_hash()[:7]
+            return sha if sha != 'unknown' else ''
+        except:
+            return ''
     elif os.path.exists(version_file):
         try:
-            from waterformer.version import __version__
+            from basicir.version import __version__
             sha = __version__.split('+')[-1]
+            return sha if sha != __version__ else ''
         except ImportError:
-            raise ImportError('Unable to get git version')
+            return ''
     else:
-        sha = 'unknown'
-
-    return sha
+        return ''
 
 
 def write_version_py():
@@ -72,7 +75,7 @@ version_info = ({})
         SHORT_VERSION = f.read().strip()
     VERSION_INFO = ', '.join(
         [x if x.isdigit() else f'"{x}"' for x in SHORT_VERSION.split('.')])
-    VERSION = SHORT_VERSION + '+' + sha
+    VERSION = SHORT_VERSION + ('+' + sha if sha else '')
 
     version_file_str = content.format(time.asctime(), VERSION, SHORT_VERSION,
                                       VERSION_INFO)
@@ -81,14 +84,15 @@ version_info = ({})
 
 
 def get_version():
-    with open(version_file, 'r') as f:
-        exec(compile(f.read(), version_file, 'exec'))
-    return locals()['__version__']
-
+    if os.path.exists(version_file):
+        with open(version_file, 'r') as f:
+            exec(compile(f.read(), version_file, 'exec'))
+        return locals()['__version__']
+    else:
+        return '0.0.0'
 
 
 def get_requirements(filename='requirements.txt'):
-    return []
     here = os.path.dirname(os.path.realpath(__file__))
     with open(os.path.join(here, filename), 'r') as f:
         requires = [line.replace('\n', '') for line in f.readlines()]
@@ -98,15 +102,15 @@ def get_requirements(filename='requirements.txt'):
 if __name__ == '__main__':
     write_version_py()
     setup(
-        name='waterformer',
+        name='basicir',
         version=get_version(),
-        description='WaterFormer for underwater image enhancement',
+        description='basic image restoration framework',
         long_description=readme(),
         author='Junjie Wen',
         author_email='jjwen@mae.cuhk.edu.hk',
-        keywords='underwater image enhancement',
+        keywords='image restoration, image enhancement',
         packages=find_packages(
-            exclude=('options', 'datasets', 'experiments', 'results',
+            exclude=('options', 'datasets', 'experiments', 'results', 'work_dirs',
                      'tb_logger', 'wandb')),
         classifiers=[
             'Development Status :: 4 - Beta',
@@ -115,6 +119,7 @@ if __name__ == '__main__':
             'Programming Language :: Python :: 3',
             'Programming Language :: Python :: 3.7',
             'Programming Language :: Python :: 3.8',
+            'Programming Language :: Python :: 3.9',
         ],
         license='Apache License 2.0',
         setup_requires=['cython', 'numpy'],

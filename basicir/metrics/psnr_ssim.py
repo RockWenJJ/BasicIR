@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from waterformer.metrics.metric_util import reorder_image, to_y_channel
+from basicir.metrics.metric_util import reorder_image, to_y_channel
 import skimage.metrics
 import torch
 

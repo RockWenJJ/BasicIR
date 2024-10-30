@@ -8,16 +8,16 @@ import torch
 import os
 from os import path as osp
 
-from waterformer.data import create_dataloader, create_dataset
-from waterformer.data.data_sampler import EnlargedSampler
-from waterformer.data.prefetch_dataloader import CPUPrefetcher, CUDAPrefetcher
-from waterformer.models import create_model
-from waterformer.utils import (MessageLogger, check_resume, get_env_info,
+from basicir.data import create_dataloader, create_dataset
+from basicir.data.data_sampler import EnlargedSampler
+from basicir.data.prefetch_dataloader import CPUPrefetcher, CUDAPrefetcher
+from basicir.models import create_model
+from basicir.utils import (MessageLogger, check_resume, get_env_info,
                            get_root_logger, get_time_str, init_tb_logger,
                            init_wandb_logger, make_exp_dirs, mkdir_and_rename,
                            set_random_seed)
-from waterformer.utils.dist_util import get_dist_info, init_dist
-from waterformer.utils.options import dict2str, parse
+from basicir.utils.dist_util import get_dist_info, init_dist
+from basicir.utils.options import dict2str, parse
 
 import numpy as np
 
@@ -25,7 +25,7 @@ import numpy as np
 def parse_options(is_train=True):
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        '--opt', type=str, required=True, help='Path to option YAML file.')
+        '--config', type=str, required=True, help='Path to option YAML file.')
     parser.add_argument(
         '--launcher',
         choices=['none', 'pytorch', 'slurm'],
@@ -33,7 +33,7 @@ def parse_options(is_train=True):
         help='job launcher')
     parser.add_argument('--local_rank', type=int, default=0)
     args = parser.parse_args()
-    opt = parse(args.opt, is_train=is_train)
+    opt = parse(args.config, is_train=is_train)
 
     # distributed settings
     if args.launcher == 'none':
@@ -63,7 +63,7 @@ def init_loggers(opt):
     log_file = osp.join(opt['path']['log'],
                         f"train_{opt['name']}_{get_time_str()}.log")
     logger = get_root_logger(
-        logger_name='waterformer', log_level=logging.INFO, log_file=log_file)
+        logger_name='basicir', log_level=logging.INFO, log_file=log_file)
     logger.info(get_env_info())
     logger.info(dict2str(opt))
 

@@ -1,12 +1,12 @@
 from torch.utils import data as data
 from torchvision.transforms.functional import normalize
 
-from waterformer.data.data_util import (paired_paths_from_folder,
+from basicir.data.data_util import (paired_paths_from_folder,
                                     paired_DP_paths_from_folder,
                                     paired_paths_from_lmdb,
                                     paired_paths_from_meta_info_file)
-from waterformer.data.transforms import augment, paired_random_crop, paired_random_crop_DP, random_augmentation
-from waterformer.utils import FileClient, imfrombytes, img2tensor, padding, padding_DP, imfrombytesDP
+from basicir.data.transforms import augment, paired_random_crop, paired_random_crop_DP, random_augmentation
+from basicir.utils import FileClient, imfrombytes, img2tensor, padding, padding_DP, imfrombytesDP
 
 import random
 import numpy as np

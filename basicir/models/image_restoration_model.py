@@ -5,12 +5,12 @@ from copy import deepcopy
 from os import path as osp
 from tqdm import tqdm
 
-from waterformer.models.archs import define_network
-from waterformer.models.base_model import BaseModel
-from waterformer.utils import get_root_logger, imwrite, tensor2img
+from basicir.models.archs import define_network
+from basicir.models.base_model import BaseModel
+from basicir.utils import get_root_logger, imwrite, tensor2img
 
-loss_module = importlib.import_module('waterformer.models.losses')
-metric_module = importlib.import_module('waterformer.metrics')
+loss_module = importlib.import_module('basicir.models.losses')
+metric_module = importlib.import_module('basicir.metrics')
 
 import os
 import random
@@ -241,60 +241,64 @@ class ImageCleanModel(BaseModel):
         cnt = 0
 
         for idx, val_data in enumerate(dataloader):
-            img_name = osp.splitext(osp.basename(val_data['lq_path'][0]))[0]
+            try:
+                img_name = osp.splitext(osp.basename(val_data['lq_path'][0]))[0]
 
-            self.feed_data(val_data)
-            test()
+                self.feed_data(val_data)
+                test()
 
-            visuals = self.get_current_visuals()
-            sr_img = tensor2img([visuals['result']], rgb2bgr=rgb2bgr)
-            if 'gt' in visuals:
-                gt_img = tensor2img([visuals['gt']], rgb2bgr=rgb2bgr)
-                del self.gt
+                visuals = self.get_current_visuals()
+                sr_img = tensor2img([visuals['result']], rgb2bgr=rgb2bgr)
+                if 'gt' in visuals:
+                    gt_img = tensor2img([visuals['gt']], rgb2bgr=rgb2bgr)
+                    del self.gt
 
-            # tentative for out of GPU memory
-            del self.lq
-            del self.output
-            torch.cuda.empty_cache()
+                # tentative for out of GPU memory
+                del self.lq
+                del self.output
+                torch.cuda.empty_cache()
 
-            if save_img:
-                
-                if self.opt['is_train']:
+                if save_img:
                     
-                    save_img_path = osp.join(self.opt['path']['visualization'],
-                                             img_name,
-                                             f'{img_name}_{current_iter}.png')
-                    
-                    save_gt_img_path = osp.join(self.opt['path']['visualization'],
-                                             img_name,
-                                             f'{img_name}_{current_iter}_gt.png')
-                else:
-                    
-                    save_img_path = osp.join(
-                        self.opt['path']['visualization'], dataset_name,
-                        f'{img_name}.png')
-                    save_gt_img_path = osp.join(
-                        self.opt['path']['visualization'], dataset_name,
-                        f'{img_name}_gt.png')
-                    
-                imwrite(sr_img, save_img_path)
-                imwrite(gt_img, save_gt_img_path)
+                    if self.opt['is_train']:
+                        
+                        save_img_path = osp.join(self.opt['path']['visualization'],
+                                                img_name,
+                                                f'{img_name}_{current_iter}.png')
+                        
+                        save_gt_img_path = osp.join(self.opt['path']['visualization'],
+                                                img_name,
+                                                f'{img_name}_{current_iter}_gt.png')
+                    else:
+                        
+                        save_img_path = osp.join(
+                            self.opt['path']['visualization'], dataset_name,
+                            f'{img_name}.png')
+                        save_gt_img_path = osp.join(
+                            self.opt['path']['visualization'], dataset_name,
+                            f'{img_name}_gt.png')
+                        
+                    imwrite(sr_img, save_img_path)
+                    imwrite(gt_img, save_gt_img_path)
 
-            if with_metrics:
-                # calculate metrics
-                opt_metric = deepcopy(self.opt['val']['metrics'])
-                if use_image:
-                    for name, opt_ in opt_metric.items():
-                        metric_type = opt_.pop('type')
-                        self.metric_results[name] += getattr(
-                            metric_module, metric_type)(sr_img, gt_img, **opt_)
-                else:
-                    for name, opt_ in opt_metric.items():
-                        metric_type = opt_.pop('type')
-                        self.metric_results[name] += getattr(
-                            metric_module, metric_type)(visuals['result'], visuals['gt'], **opt_)
+                if with_metrics:
+                    # calculate metrics
+                    opt_metric = deepcopy(self.opt['val']['metrics'])
+                    if use_image:
+                        for name, opt_ in opt_metric.items():
+                            metric_type = opt_.pop('type')
+                            self.metric_results[name] += getattr(
+                                metric_module, metric_type)(sr_img, gt_img, **opt_)
+                    else:
+                        for name, opt_ in opt_metric.items():
+                            metric_type = opt_.pop('type')
+                            self.metric_results[name] += getattr(
+                                metric_module, metric_type)(visuals['result'], visuals['gt'], **opt_)
 
-            cnt += 1
+                cnt += 1
+            except Exception as e:
+                print(e)
+                continue
 
         current_metric = 0.
         if with_metrics:
