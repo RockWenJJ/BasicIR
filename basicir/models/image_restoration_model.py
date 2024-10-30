@@ -48,11 +48,11 @@ class Mixing_Augment:
             target, input_ = self.augments[augment](target, input_)
         return target, input_
 
-class ImageCleanModel(BaseModel):
+class ImageRestorationModel(BaseModel):
     """Base model for single image restoration."""
 
     def __init__(self, opt):
-        super(ImageCleanModel, self).__init__(opt)
+        super(ImageRestorationModel, self).__init__(opt)
 
         # define network
 
@@ -213,12 +213,13 @@ class ImageCleanModel(BaseModel):
                 pred = pred[-1]
             self.output = pred
             self.net_g.train()
+        return self.output
 
     def dist_validation(self, dataloader, current_iter, tb_logger, save_img, rgb2bgr, use_image):
         if os.environ['LOCAL_RANK'] == '0':
             return self.nondist_validation(dataloader, current_iter, tb_logger, save_img, rgb2bgr, use_image)
         else:
-            return 0.
+            return 0
 
     def nondist_validation(self, dataloader, current_iter, tb_logger,
                            save_img, rgb2bgr, use_image):
@@ -339,3 +340,4 @@ class ImageCleanModel(BaseModel):
         else:
             self.save_network(self.net_g, 'net_g', current_iter)
         self.save_training_state(epoch, current_iter)
+

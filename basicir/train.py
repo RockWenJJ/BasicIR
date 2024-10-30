@@ -12,6 +12,7 @@ from basicir.data import create_dataloader, create_dataset
 from basicir.data.data_sampler import EnlargedSampler
 from basicir.data.prefetch_dataloader import CPUPrefetcher, CUDAPrefetcher
 from basicir.models import create_model
+from basicir.models.rater import Rater
 from basicir.utils import (MessageLogger, check_resume, get_env_info,
                            get_root_logger, get_time_str, init_tb_logger,
                            init_wandb_logger, make_exp_dirs, mkdir_and_rename,
@@ -187,6 +188,9 @@ def main():
         start_epoch = 0
         current_iter = 0
 
+    # create rater
+    rater = Rater(opt['rater']) if opt.get('rater') is not None else None
+
     # create message logger (formatted outputs)
     msg_logger = MessageLogger(opt, current_iter, tb_logger)
 
@@ -277,6 +281,8 @@ def main():
             model.optimize_parameters(current_iter)
 
             iter_time = time.time() - iter_time
+            
+
             # log
             if current_iter % opt['logger']['print_freq'] == 0:
                 log_vars = {'epoch': epoch, 'iter': current_iter}
@@ -298,6 +304,11 @@ def main():
                 use_image = opt['val'].get('use_image', True)
                 model.validation(val_loader, current_iter, tb_logger,
                                  opt['val']['save_img'], rgb2bgr, use_image )
+            
+            # update database
+            if opt.get('rater') is not None and current_iter >= opt['rater']['rate_start_iter'] \
+                    and (current_iter % opt['rater']['rate_freq'] == 0):
+                rater.rate_and_update_database(model.net_g_ema)
 
             data_time = time.time()
             iter_time = time.time()
