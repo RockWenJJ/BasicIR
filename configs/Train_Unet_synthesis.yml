@@ -1,5 +1,5 @@
 # general settings
-name: CrossSpaceFormer_UIER
+name: Unet_synthesis
 model_type: ImageRestorationModel
 scale: 1
 num_gpu: 1  # set num_gpu: 0 for cpu mode
@@ -10,8 +10,8 @@ datasets:
   train:
     name: TrainSet
     type: Dataset_PairedImage
-    dataroot_gt: ./datasets/train/target
-    dataroot_lq: ./datasets/train/input
+    dataroot_gt: ./datasets/synthesis/target/train
+    dataroot_lq: ./datasets/synthesis/input/train
     geometric_augs: true
 
     filename_tmpl: '{}'
@@ -20,12 +20,12 @@ datasets:
 
     # data loader
     use_shuffle: true
-    num_worker_per_gpu: 8
+    num_worker_per_gpu: 1
     batch_size_per_gpu: 8
 
     ### -------------Progressive training--------------------------
-    mini_batch_sizes: [8,3,2,1,1,1]             # Batch size per gpu   
-    iters: [92000,64000,48000,36000,36000,24000]
+    mini_batch_sizes: [8,5,4,2,1,1]             # Batch size per gpu   
+    iters: [42000,14000,8000,6000,6000,4000]
     gt_size: 384   # Max patch size for progressive training
     gt_sizes: [128,160,192,256,320,384]  # Patch sizes for progressive training.
 
@@ -35,20 +35,16 @@ datasets:
   val:
     name: ValSet
     type: Dataset_PairedImage
-    dataroot_gt: ./datasets/val/target
-    dataroot_lq: ./datasets/val/input
+    dataroot_gt: ./datasets/synthesis/target/val
+    dataroot_lq: ./datasets/synthesis/input/val
     io_backend:
       type: disk
 
 # network structures
 network_g:
-  type: CrossSpaceFormer
+  type: UNet
   inp_channels: 3
   out_channels: 3
-  dim: 36
-  num_blocks: [2,4,4,2]
-  heads: [1,2,4,8]
-  bias: False
 
 
 # path
@@ -62,7 +58,6 @@ train:
   total_iter: 300000
   warmup_iter: -1 # no warm up
   use_grad_clip: true
-  ema_decay: 0.9999
 
   # Split 300k iterations into two cycles. 
   # 1st cycle: fixed 3e-4 LR for 92k iters. 
@@ -93,11 +88,11 @@ train:
 # validation settings
 val:
   window_size: 8
-  val_freq: !!float 2e3
+  val_freq: !!float 4e3
   save_img: false
   rgb2bgr: true
   use_image: true
-  max_minibatch: 1
+  max_minibatch: 8
 
   metrics:
     psnr: # metric name, can be arbitrary
@@ -108,7 +103,7 @@ val:
 # logging settings
 logger:
   print_freq: 100
-  save_checkpoint_freq: !!float 5e3
+  save_checkpoint_freq: !!float 4e3
   use_tb_logger: true
   wandb:
     project: ~
@@ -118,9 +113,3 @@ logger:
 dist_params:
   backend: nccl
   port: 29500
-
-rater:
-  rate_start_iter: !!float 8e4
-  rate_freq: !!float 1e4
-  rating_model: openai/clip-vit-large-patch14
-  db_path: ./datasets/train/target

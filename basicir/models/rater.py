@@ -58,8 +58,8 @@ class Rater:
                 save_img(origin_img_path, restored_img)
                 update_count += 1
 
-        print(f"Average origin score: {ave_origin_score / len(self.db_files)*100:.2f}%")
-        print(f"Average restored score: {ave_restored_score / len(self.db_files)*100:.2f}%")
+        print(f"Average origin score: {ave_origin_score / len(self.db_files):.2f}")
+        print(f"Average restored score: {ave_restored_score / len(self.db_files):.2f}")
         print(f"Update ratio: {update_count / len(self.db_files)*100:.2f}%")
 
     

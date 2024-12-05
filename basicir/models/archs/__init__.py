@@ -5,6 +5,8 @@ from basicir.utils import scandir
 
 from .waterformer_arch import WaterFormer
 from .crossspaceformer_arch import CrossSpaceFormer
+from .restormer_arch import Restormer
+from .unet_arch import UNet
 
 # automatically scan and import arch modules
 # scan all the files under the 'archs' folder and collect files ending with
@@ -47,3 +49,8 @@ def define_network(opt):
     network_type = opt.pop('type')
     net = dynamic_instantiation(_arch_modules, network_type, opt)
     return net
+
+__all__ = [
+    'UNet',
+    # ... other architectures ...
+]

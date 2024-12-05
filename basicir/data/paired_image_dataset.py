@@ -68,9 +68,20 @@ class Dataset_PairedImage(data.Dataset):
                 [self.lq_folder, self.gt_folder], ['lq', 'gt'],
                 self.opt['meta_info_file'], self.filename_tmpl)
         else:
-            self.paths = paired_paths_from_folder(
-                [self.lq_folder, self.gt_folder], ['lq', 'gt'],
-                self.filename_tmpl)
+            if isinstance(self.gt_folder, list) and isinstance(self.lq_folder, list):
+                assert len(self.gt_folder) == len(self.lq_folder), \
+                    "The lengths of gt_folder and lq_folder should be the same."
+                self.paths = []
+                for gt_folder, lq_folder in zip(self.gt_folder, self.lq_folder):
+                    self.paths.extend(paired_paths_from_folder(
+                        [lq_folder, gt_folder], ['lq', 'gt'],
+                        self.filename_tmpl))
+            else:
+                self.paths = paired_paths_from_folder(
+                    [self.lq_folder, self.gt_folder], ['lq', 'gt'],
+                    self.filename_tmpl)
+
+            
 
         if self.opt['phase'] == 'train':
             self.geometric_augs = opt['geometric_augs']
