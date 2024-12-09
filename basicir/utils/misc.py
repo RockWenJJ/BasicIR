@@ -233,7 +233,10 @@ def restore_single_img(model, img_path, tile=None, tile_overlap=32):
                     W[..., h_idx:(h_idx+tile), w_idx:(w_idx+tile)].add_(out_patch_mask)
             restored = E.div_(W)
 
-        restored = torch.clamp(restored, 0, 1)
+        restored[:, 0, :, :] = (restored[:, 0, :, :] - restored[:, 0, :, :].min()) / (restored[:, 0, :, :].max() - restored[:, 0, :, :].min())
+        restored[:, 1, :, :] = (restored[:, 1, :, :] - restored[:, 1, :, :].min()) / (restored[:, 1, :, :].max() - restored[:, 1, :, :].min())
+        restored[:, 2, :, :] = (restored[:, 2, :, :] - restored[:, 2, :, :].min()) / (restored[:, 2, :, :].max() - restored[:, 2, :, :].min())
+        # restored = torch.clamp(restored, 0, 1)
 
         # Unpad the output
         restored = restored[:,:,:height,:width]
