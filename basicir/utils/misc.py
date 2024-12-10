@@ -186,37 +186,51 @@ def load_img(filepath):
 def save_img(filepath, img):
     cv2.imwrite(filepath,cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
 
-def restore_single_img(model, img_path, tile=None, tile_overlap=32):
-    """Restore a single image."""
+def restore_single_img(model, img_path, tile=None, tile_overlap=32, max_tile_size=384):
+    """Restore a single image.
+    
+    Args:
+        model: The restoration model
+        img_path (str): Path to input image
+        tile (int): Tile size for splitting large images. If None, process whole image at once
+        tile_overlap (int): Overlap between tiles to avoid boundary artifacts
+        max_tile_size (int): Maximum tile size to prevent OOM errors
+    """
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model.to(device)
     model.eval()
     img_multiple_of = 8
 
+    # Clear GPU memory before processing
     if torch.cuda.is_available():
-        torch.cuda.ipc_collect()
         torch.cuda.empty_cache()
 
     img = load_img(img_path)
     input_ = torch.from_numpy(img).float().div(255.).permute(2, 0, 1).unsqueeze(0).to(device)
 
-    # Pad the input if not_multiple_of 8
-    height,width = input_.shape[2], input_.shape[3]
-    H,W = ((height+img_multiple_of)//img_multiple_of)*img_multiple_of, ((width+img_multiple_of)//img_multiple_of)*img_multiple_of
+    # Pad the input if not multiple of 8
+    height, width = input_.shape[2], input_.shape[3]
+    H, W = ((height+img_multiple_of)//img_multiple_of)*img_multiple_of, ((width+img_multiple_of)//img_multiple_of)*img_multiple_of
     padh = H-height if height%img_multiple_of!=0 else 0
     padw = W-width if width%img_multiple_of!=0 else 0
     input_ = F.pad(input_, (0,padw,0,padh), 'reflect')
-    
-    try:
-        if tile is None:
-            ## Testing on the original resolution image
-            restored = model(input_)
-        else:
-            # test the image tile by tile
-            b, c, h, w = input_.shape
-            tile = min(tile, h, w)
-            assert tile % 8 == 0, "tile size should be multiple of 8"
 
+    try:
+        if tile is None and max(height, width) <= max_tile_size:
+            # Process whole image if it's small enough
+            with torch.no_grad():
+                restored = model(input_)
+        else:
+            # Automatically determine tile size if not specified
+            if tile is None:
+                tile = min(max_tile_size, max(height, width))
+            tile = min(tile, max_tile_size)
+            
+            # Ensure tile size is multiple of 8
+            tile = (tile // img_multiple_of) * img_multiple_of
+            
+            # Process image tile by tile
+            b, c, h, w = input_.shape
             stride = tile - tile_overlap
             h_idx_list = list(range(0, h-tile, stride)) + [h-tile]
             w_idx_list = list(range(0, w-tile, stride)) + [w-tile]
@@ -225,26 +239,46 @@ def restore_single_img(model, img_path, tile=None, tile_overlap=32):
 
             for h_idx in h_idx_list:
                 for w_idx in w_idx_list:
+                    # Clear cache before processing each tile
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        
                     in_patch = input_[..., h_idx:h_idx+tile, w_idx:w_idx+tile]
-                    out_patch = model(in_patch)
+                    
+                    # Process tile with gradient disabled
+                    with torch.no_grad():
+                        out_patch = model(in_patch)
                     out_patch_mask = torch.ones_like(out_patch)
 
                     E[..., h_idx:(h_idx+tile), w_idx:(w_idx+tile)].add_(out_patch)
                     W[..., h_idx:(h_idx+tile), w_idx:(w_idx+tile)].add_(out_patch_mask)
+                    
+                    # Explicitly delete unnecessary tensors
+                    del out_patch, out_patch_mask
+                    
             restored = E.div_(W)
 
-        restored[:, 0, :, :] = (restored[:, 0, :, :] - restored[:, 0, :, :].min()) / (restored[:, 0, :, :].max() - restored[:, 0, :, :].min())
-        restored[:, 1, :, :] = (restored[:, 1, :, :] - restored[:, 1, :, :].min()) / (restored[:, 1, :, :].max() - restored[:, 1, :, :].min())
-        restored[:, 2, :, :] = (restored[:, 2, :, :] - restored[:, 2, :, :].min()) / (restored[:, 2, :, :].max() - restored[:, 2, :, :].min())
-        # restored = torch.clamp(restored, 0, 1)
+        # Normalize each channel
+        for c in range(3):
+            c_data = restored[:, c, :, :]
+            c_min = c_data.min()
+            c_max = c_data.max()
+            restored[:, c, :, :] = (c_data - c_min) / (c_max - c_min + 1e-7)
 
         # Unpad the output
         restored = restored[:,:,:height,:width]
 
-        restored = restored.permute(0, 2, 3, 1).cpu().detach().numpy()
+        # Convert to numpy array
+        restored = restored.cpu()
+        restored = restored.permute(0, 2, 3, 1).numpy()
         restored = img_as_ubyte(restored[0])
-    except Exception as e:
-        print(e)
+        
+        # Clear GPU memory after processing
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
+    except Exception as error:
+        print(f"Error during image restoration: {error}")
         return img
     
     return restored
