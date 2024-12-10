@@ -234,10 +234,10 @@ def main():
         train_data = prefetcher.next()
 
         while train_data is not None:
-            # update database
-            if opt.get('rater') is not None and current_iter >= opt['rater']['rate_start_iter'] \
-                    and (current_iter % opt['rater']['rate_freq'] == 0):
-                rater.rate_and_update_database(model.net_g_ema)
+            # # update database
+            # if opt.get('rater') is not None and current_iter >= opt['rater']['rate_start_iter'] \
+            #         and (current_iter % opt['rater']['rate_freq'] == 0):
+            #     rater.rate_and_update_database(model.net_g_ema)
 
             data_time = time.time() - data_time
 
@@ -310,10 +310,10 @@ def main():
                 model.validation(val_loader, current_iter, tb_logger,
                                  opt['val']['save_img'], rgb2bgr, use_image )
             
-            # # update database
-            # if opt.get('rater') is not None and current_iter >= opt['rater']['rate_start_iter'] \
-            #         and (current_iter % opt['rater']['rate_freq'] == 0):
-            #     rater.rate_and_update_database(model.net_g_ema)
+            # update database
+            if opt.get('rater') is not None and current_iter >= opt['rater']['rate_start_iter'] \
+                    and (current_iter % opt['rater']['rate_freq'] == 0):
+                rater.rate_and_update_database(model.net_g_ema)
 
             data_time = time.time()
             iter_time = time.time()
