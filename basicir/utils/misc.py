@@ -245,5 +245,6 @@ def restore_single_img(model, img_path, tile=None, tile_overlap=32):
         restored = img_as_ubyte(restored[0])
     except Exception as e:
         print(e)
+        return img
     
     return restored
