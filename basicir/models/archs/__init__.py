@@ -7,6 +7,7 @@ from .waterformer_arch import WaterFormer
 from .crossspaceformer_arch import CrossSpaceFormer
 from .restormer_arch import Restormer
 from .unet_arch import UNet
+from .yolov8unet_arch import YOLOv8UNet
 
 # automatically scan and import arch modules
 # scan all the files under the 'archs' folder and collect files ending with

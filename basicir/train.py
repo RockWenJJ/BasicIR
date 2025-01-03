@@ -7,6 +7,7 @@ import time
 import torch
 import os
 from os import path as osp
+import wandb
 
 from basicir.data import create_dataloader, create_dataset
 from basicir.data.data_sampler import EnlargedSampler
@@ -333,6 +334,14 @@ def main():
                          opt['val']['save_img'])
     if tb_logger:
         tb_logger.close()
+
+    wandb.init(
+        project=opt['logger']['wandb']['project'],
+        name=opt['logger']['wandb'].get('wandb_run_name', 'default_run_name'),
+        config=opt
+    )
+
+    wandb.finish()
 
 
 if __name__ == '__main__':
