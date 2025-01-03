@@ -110,7 +110,7 @@ logger:
   wandb:
     project: SYN-UIER_UIE
     resume_id: ~
-    wandb_run_name: "YOLOv8UNet"
+    wandb_run_name: "YOLOv8nUNet"
 
 # dist training settings
 dist_params:
