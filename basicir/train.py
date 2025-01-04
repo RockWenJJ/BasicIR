@@ -29,6 +29,8 @@ def parse_options(is_train=True):
     parser.add_argument(
         '--config', type=str, required=True, help='Path to option YAML file.')
     parser.add_argument(
+        '--work-dir', type=str, help='Path to work directory. Default: ./work_dirs')
+    parser.add_argument(
         '--launcher',
         choices=['none', 'pytorch', 'slurm'],
         default='none',
@@ -36,6 +38,19 @@ def parse_options(is_train=True):
     parser.add_argument('--local_rank', type=int, default=0)
     args = parser.parse_args()
     opt = parse(args.config, is_train=is_train)
+
+    # Set work directory
+    if args.work_dir is not None:
+        opt['work_dir'] = args.work_dir
+    else:
+        opt['work_dir'] = './work_dirs'
+
+    # Update paths to use work_dir
+    opt['path']['experiments_root'] = osp.join(opt['work_dir'], opt['name'])
+    opt['path']['models'] = osp.join(opt['path']['experiments_root'], 'models')
+    opt['path']['training_states'] = osp.join(opt['path']['experiments_root'], 'training_states')
+    opt['path']['log'] = osp.join(opt['path']['experiments_root'], 'log')
+    opt['path']['visualization'] = osp.join(opt['path']['experiments_root'], 'visualization')
 
     # distributed settings
     if args.launcher == 'none':
@@ -132,15 +147,14 @@ def create_train_val_dataloader(opt, logger):
 
 
 def main():
-    # parse options, set distributed setting, set ramdom seed
+    # parse options, set distributed setting, set random seed
     opt = parse_options(is_train=True)
 
     torch.backends.cudnn.benchmark = True
     # torch.backends.cudnn.deterministic = True
 
-    # automatic resume ..
-    state_folder_path = 'work_dirs/{}/training_states/'.format(opt['name'])
-    import os
+    # automatic resume - modified to use work_dir
+    state_folder_path = osp.join(opt['path']['training_states'])
     try:
         states = os.listdir(state_folder_path)
     except:
