@@ -35,8 +35,8 @@ datasets:
   val:
     name: ValSet
     type: Dataset_PairedImage
-    dataroot_gt: ./datasets/uie_syn/val/target
-    dataroot_lq: ./datasets/uie_syn/val/input
+    dataroot_gt: [./datasets/uie_syn/val/target, ./datasets/uie_r/val/target]
+    dataroot_lq: [./datasets/uie_syn/val/input, ./datasets/uie_r/val/input]
     io_backend:
       type: disk
 
