@@ -1,8 +1,6 @@
 import argparse
 import importlib
 import torch
-import yaml
-from basicir.models.archs import *
 from thop import profile
 from basicir.utils.options import parse
 
@@ -30,31 +28,38 @@ def get_model_complexity_info(model, input_size=(3, 256, 256)):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--arch', type=str, required=True, help='Architecture name')
-    parser.add_argument('--config', type=str, required=True, help='Path to config file')
+    parser.add_argument('--config', default=None, help='Path to config file')
     parser.add_argument('--input_size', type=int, default=256, help='Input size (assuming square input)')
     args = parser.parse_args()
 
     try:
-        # Load config file
-        opt = parse(args.config, is_train=False)
-        
-        # Get network_g parameters from config
-        if 'network_g' not in opt:
-            raise ValueError("Config file must contain 'network_g' settings")
-        
-        network_opt = opt['network_g']
-        network_type = network_opt.pop('type')
-        if network_type != args.arch:
-            print(f"Warning: Config file specifies architecture '{network_type}' "
-                  f"but requested architecture is '{args.arch}'")
+        if args.config:
+            # Load config file
+            opt = parse(args.config, is_train=False)
+            
+            # Get network_g parameters from config
+            if 'network_g' not in opt:
+                raise ValueError("Config file must contain 'network_g' settings")
+            
+            network_opt = opt['network_g']
+            network_type = network_opt.pop('type')
+            if network_type != args.arch:
+                print(f"Warning: Config file specifies architecture '{network_type}' "
+                      f"but requested architecture is '{args.arch}'")
 
-        # Dynamically import the architecture
-        arch_module = importlib.import_module('basicir.models.archs')
-        model_class = getattr(arch_module, args.arch)
-        
-        # Initialize model with parameters from config
-        model = model_class(**network_opt)
-        
+            # Dynamically import the architecture
+            arch_module = importlib.import_module('basicir.models.archs')
+            model_class = getattr(arch_module, args.arch)
+            
+            # Initialize model with parameters from config
+            model = model_class(**network_opt)
+        else:
+            # If no config is provided, initialize the default architecture
+            print("No config provided. Initializing default architecture.")
+            arch_module = importlib.import_module('basicir.models.archs')
+            model_class = getattr(arch_module, args.arch)
+            model = model_class()  # Assuming default constructor works
+
         # Get complexity info
         complexity_info = get_model_complexity_info(
             model, 
@@ -63,7 +68,7 @@ def main():
         
         print('=' * 50)
         print(f'Architecture: {args.arch}')
-        print(f'Config file: {args.config}')
+        print(f'Config file: {args.config if args.config else "None (default initialization)"}')
         print(f'Input size: ({3} x {args.input_size} x {args.input_size})')
         print('-' * 50)
         print(f'Parameters: {complexity_info["params"]}')

@@ -8,6 +8,7 @@ from .crossspaceformer_arch import CrossSpaceFormer
 from .restormer_arch import Restormer
 from .unet_arch import UNet
 from .yolov8unet_arch import YOLOv8UNet
+from .liteenhancenet_arch import LiteEnhanceNet
 
 # automatically scan and import arch modules
 # scan all the files under the 'archs' folder and collect files ending with
