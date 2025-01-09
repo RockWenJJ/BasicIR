@@ -204,11 +204,7 @@ class Bottleneck(nn.Module):
 class LUUIE(nn.Module):
     def __init__(self, in_channels=3, out_channels=3, features=[16, 64, 96]):
         super(LUUIE, self).__init__()
-        # in_conv
-        self.in_conv = nn.Sequential(
-            nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1, groups=in_channels),
-            nn.Conv2d(in_channels, features[0], kernel_size=1, stride=1, padding=0),
-        )
+        self.in_conv = nn.Conv2d(in_channels, features[0], kernel_size=1, stride=1, padding=0)
 
         # encoder
         self.encoder1 = EncoderBlock(features[0], features[1])
