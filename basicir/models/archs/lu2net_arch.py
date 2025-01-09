@@ -7,7 +7,7 @@ class AxialDepthwiseConv(nn.Module):
         self.horizontal_conv = nn.Conv2d(in_channels, in_channels, kernel_size=(1, kernel_length), padding=(0, kernel_length // 2), groups=in_channels)
         self.vertical_conv = nn.Conv2d(in_channels, in_channels, kernel_size=(kernel_length, 1), padding=(kernel_length // 2, 0), groups=in_channels)
         self.pointwise_conv = nn.Conv2d(in_channels, in_channels, kernel_size=1)
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU(inplace=False)
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
 
     def forward(self, x):
@@ -38,7 +38,7 @@ class PointwiseConv(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(PointwiseConv, self).__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU(inplace=False)
 
     def forward(self, x):
         return self.relu(self.conv(x))
@@ -54,7 +54,7 @@ class Bottleneck(nn.Module):
         self.calayer2 = CALayer(out_channels)
         self.calayer3 = CALayer(out_channels)
         self.pointwise2 = PointwiseConv(out_channels, out_channels)
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU(inplace=False)
 
     def forward(self, x):
         x = self.pointwise1(x)
@@ -93,7 +93,7 @@ class DecoderBlock(nn.Module):
         self.axial_depthwise_conv = AxialDepthwiseConv(in_channels*2, out_channels)
         self.calayer = CALayer(out_channels)
         self.pwconv2 = PointwiseConv(out_channels, out_channels)
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU(inplace=False)
 
     def forward(self, x0, x):
         x = self.upsample(x)
