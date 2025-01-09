@@ -114,9 +114,9 @@ class C2f(nn.Module):
             x = m(x) + x if self.shortcut else m(x)
         return self.conv_up(x)
 
-class EncoderBlock(nn.Module):
+class EncoderBlockv1(nn.Module):
     def __init__(self, in_channels, out_channels):
-        super(EncoderBlock, self).__init__()
+        super(EncoderBlockv1, self).__init__()
         self.c2f = C2f(in_channels, out_channels)
         self.downsample = nn.MaxPool2d(kernel_size=2, stride=2)
 
@@ -126,9 +126,9 @@ class EncoderBlock(nn.Module):
         x = self.downsample(x)
         return x0, x
 
-class DecoderBlock(nn.Module):
+class DecoderBlockv1(nn.Module):
     def __init__(self, in_channels, out_channels):
-        super(DecoderBlock, self).__init__()
+        super(DecoderBlockv1, self).__init__()
         self.upsample = nn.Upsample(scale_factor=2, mode='bilinear')
         self.c2f = C2f(in_channels*2, out_channels)
 
@@ -199,21 +199,107 @@ class Bottleneck(nn.Module):
         # Apply attention weights
         out = x * attention_weights.expand_as(x) + x
         return out
-    
 
-class LUUIE(nn.Module):
+class CALayer(nn.Module):
+    def __init__(self, in_channels, reduction=16):
+        super(CALayer, self).__init__()
+        self.global_avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.mlp = nn.Sequential(
+            nn.Linear(in_channels, in_channels // reduction, bias=False),
+            nn.ReLU(),
+            nn.Linear(in_channels // reduction, in_channels, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        w = self.global_avg_pool(x).view(b, c)
+        w = self.mlp(w).view(b, c, 1, 1)
+        return x * w
+    
+class PointwiseConv(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(PointwiseConv, self).__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+        self.relu = nn.ReLU(inplace=False)
+
+    def forward(self, x):
+        return self.relu(self.conv(x))
+
+class EncoderBlockv2(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(EncoderBlockv2, self).__init__()
+        self.axial_depthwise_conv = ConvBlock(in_channels, out_channels)
+        self.calayer = CALayer(out_channels)
+        # self.pwconv = PointwiseConv(out_channels, out_channels)
+        self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
+
+    def forward(self, x):
+        x = self.axial_depthwise_conv(x)
+        x = self.calayer(x)
+        out0 = x
+        # x = self.pwconv(x)
+        x = self.maxpool(x)
+        return out0, x
+
+class DecoderBlockv2(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(DecoderBlockv2, self).__init__()
+        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        self.pwconv = PointwiseConv(in_channels*2, in_channels*2)
+        self.axial_depthwise_conv = ConvBlock(in_channels*2, out_channels)
+        self.calayer = CALayer(out_channels)
+        # self.pwconv2 = PointwiseConv(out_channels, out_channels)
+        self.relu = nn.ReLU(inplace=False)
+
+    def forward(self, x, x0):
+        x = self.upsample(x)
+        x = torch.cat([x0, x], dim=1)
+        x = self.pwconv(x)
+        x = self.axial_depthwise_conv(x)
+        x = self.calayer(x)
+        # x = self.pwconv2(self.relu(x))
+        return self.relu(x)
+
+class LUUIEv1(nn.Module):
     def __init__(self, in_channels=3, out_channels=3, features=[16, 64, 96]):
-        super(LUUIE, self).__init__()
+        super(LUUIEv1, self).__init__()
         self.in_conv = nn.Conv2d(in_channels, features[0], kernel_size=1, stride=1, padding=0)
 
         # encoder
-        self.encoder1 = EncoderBlock(features[0], features[1])
-        self.encoder2 = EncoderBlock(features[1], features[2])
+        self.encoder1 = EncoderBlockv1(features[0], features[1])
+        self.encoder2 = EncoderBlockv1(features[1], features[2])
         # bottleneck
         self.bottleneck = Bottleneck(features[2], reduction=32)
         # decoder
-        self.decoder1 = DecoderBlock(features[2], features[1])
-        self.decoder2 = DecoderBlock(features[1], features[0])
+        self.decoder1 = DecoderBlockv1(features[2], features[1])
+        self.decoder2 = DecoderBlockv1(features[1], features[0])
+        # out_conv
+        self.out_conv = nn.Conv2d(features[0], out_channels, kernel_size=1, stride=1, padding=0)
+    
+    def forward(self, x):
+        x = self.in_conv(x)
+        x0, x = self.encoder1(x)
+        x1, x = self.encoder2(x)
+        x = self.bottleneck(x)
+        x = self.decoder1(x, x1)
+        x = self.decoder2(x, x0)
+        x = self.out_conv(x)
+        return x
+
+class LUUIEv2(nn.Module):
+    def __init__(self, in_channels=3, out_channels=3, features=[16, 64, 96]):
+        super(LUUIEv2, self).__init__()
+        self.in_conv = nn.Conv2d(in_channels, features[0], kernel_size=1, stride=1, padding=0)
+
+        # encoder
+        self.encoder1 = EncoderBlockv2(features[0], features[1])
+        self.encoder2 = EncoderBlockv2(features[1], features[2])
+        # bottleneck
+        self.bottleneck = Bottleneck(features[2], reduction=32)
+        # decoder
+        self.decoder1 = DecoderBlockv2(features[2], features[1])
+        self.decoder2 = DecoderBlockv2(features[1], features[0])
         # out_conv
         self.out_conv = nn.Conv2d(features[0], out_channels, kernel_size=1, stride=1, padding=0)
     
@@ -228,7 +314,7 @@ class LUUIE(nn.Module):
         return x
 
 if __name__ == '__main__':
-    model = LUUIE()
+    model = LUUIEv2()
     x = torch.randn(1, 3, 256, 256)
     y = model(x)
     print(y.shape)
