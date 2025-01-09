@@ -10,8 +10,8 @@ datasets:
   train:
     name: TrainSet
     type: Dataset_PairedImage
-    dataroot_gt: [./datasets/uieb/train/target]
-    dataroot_lq: [./datasets/uieb/train/input]
+    dataroot_gt: [./datasets/uieb/target/train]
+    dataroot_lq: [./datasets/uieb/input/train]
     geometric_augs: true
 
     filename_tmpl: '{}'
@@ -35,8 +35,8 @@ datasets:
   val:
     name: ValSet
     type: Dataset_PairedImage
-    dataroot_gt: [./datasets/uieb/val/target]
-    dataroot_lq: [./datasets/uieb/val/input]
+    dataroot_gt: [./datasets/uieb/target/val]
+    dataroot_lq: [./datasets/uieb/input/val]
     io_backend:
       type: disk
 
