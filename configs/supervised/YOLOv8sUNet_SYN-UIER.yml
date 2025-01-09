@@ -1,5 +1,5 @@
 # general settings
-name: YOLOv8UNet_SYN-UIER
+name: YOLOv8sUNet_SYN-UIER
 model_type: ImageRestorationModel
 scale: 1
 num_gpu: 1  # set num_gpu: 0 for cpu mode
@@ -24,7 +24,7 @@ datasets:
     batch_size_per_gpu: 8
 
     ### -------------Progressive training--------------------------
-    mini_batch_sizes: [16,16,12,8,8,4]             # Batch size per gpu   
+    mini_batch_sizes: [12,12,8,6,4,4]             # Batch size per gpu   
     iters: [92000,64000,48000,36000,36000,24000]
     gt_size: 384   # Max patch size for progressive training
     gt_sizes: [128,160,192,256,320,384]  # Patch sizes for progressive training.
@@ -45,7 +45,7 @@ network_g:
   type: YOLOv8UNet
   inp_channels: 3
   out_channels: 3
-  width_mult: 0.25
+  width_mult: 0.5
 
 
 # path
@@ -101,6 +101,10 @@ val:
       type: calculate_psnr
       crop_border: 0
       test_y_channel: false
+    ssim:
+      type: calculate_ssim
+      crop_border: 0
+      test_y_channel: false
 
 # logging settings
 logger:
@@ -110,7 +114,7 @@ logger:
   wandb:
     project: SYN-UIER_UIE
     resume_id: ~
-    wandb_run_name: "YOLOv8nUNet"
+    wandb_run_name: "YOLOv8sUNet"
 
 # dist training settings
 dist_params:

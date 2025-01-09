@@ -152,3 +152,69 @@ class CharbonnierLoss(nn.Module):
         # loss = torch.sum(torch.sqrt(diff * diff + self.eps))
         loss = torch.mean(torch.sqrt((diff * diff) + (self.eps*self.eps)))
         return loss
+
+
+class SaturatedLoss(nn.Module):
+    def __init__(self, loss_weight=1.0, reduction='mean'):
+        super(SaturatedLoss, self).__init__()
+        self.loss_weight = loss_weight
+        self.reduction = reduction
+
+    def forward(self, x):
+        if self.reduction == 'mean':
+            positive_saturation = torch.mean(torch.max(x, torch.tensor(1.0).to(x.device)))
+            negative_saturation = torch.mean(torch.min(x, torch.tensor(0.0).to(x.device)))
+            loss = positive_saturation - negative_saturation
+        elif self.reduction == 'sum':
+            positive_saturation = torch.sum(torch.max(x, torch.tensor(1.0).to(x.device)))
+            negative_saturation = torch.sum(torch.min(x, torch.tensor(0.0).to(x.device)))
+            loss = positive_saturation - negative_saturation
+        return loss
+
+class ColorCastLoss(nn.Module):
+    def __init__(self):
+        super(ColorCastLoss, self).__init__()
+        # Define channel pairs (R, G), (G, B), (B, R)
+        self.channel_pairs = [(0, 1), (1, 2), (2, 0)]
+
+    def forward(self, enhanced_image):
+        """
+        Args:
+            enhanced_image (torch.Tensor): A tensor of shape (N, C, H, W), where
+                                           N = batch size,
+                                           C = number of channels (3 for RGB),
+                                           H, W = height and width of the image.
+
+        Returns:
+            torch.Tensor: The computed color cast loss (scalar).
+        """
+        # Ensure the input is a 4D tensor
+        assert enhanced_image.ndim == 4, "Input must be a 4D tensor (N, C, H, W)"
+        assert enhanced_image.size(1) == 3, "Input must have 3 color channels (RGB)"
+        
+        loss = 0.0
+        # Iterate over channel pairs (R, G), (G, B), (B, R)
+        for c1, c2 in self.channel_pairs:
+            # Compute the mean of each channel
+            mean_c1 = enhanced_image[:, c1, :, :].mean(dim=(1, 2))  # Mean of channel c1
+            mean_c2 = enhanced_image[:, c2, :, :].mean(dim=(1, 2))  # Mean of channel c2
+            
+            # Compute the squared difference between the means
+            loss += torch.mean((mean_c1 - mean_c2) ** 2)
+        
+        loss = loss / 3.0
+        return loss
+
+class ReconstructionLoss(nn.Module):
+    def __init__(self, loss_weight=1.0, reduction='mean'):
+        super(ReconstructionLoss, self).__init__()
+        self.loss_weight = loss_weight
+        self.reduction = reduction
+
+    def forward(self, target, J, T, B):
+        I_hat = J*T + B
+        if self.reduction == 'mean':
+            loss = F.l1_loss(I_hat, target, reduction='mean')
+        elif self.reduction == 'sum':
+            loss = F.l1_loss(I_hat, target, reduction='none')
+        return loss

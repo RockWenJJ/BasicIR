@@ -1,5 +1,5 @@
 # general settings
-name: Unet_synthesis
+name: UIEB_UNet
 model_type: ImageRestorationModel
 scale: 1
 num_gpu: 1  # set num_gpu: 0 for cpu mode
@@ -10,8 +10,8 @@ datasets:
   train:
     name: TrainSet
     type: Dataset_PairedImage
-    dataroot_gt: [./datasets/uie_syn/train/target, ./datasets/uie_r/train/target]
-    dataroot_lq: [./datasets/uie_syn/train/input, ./datasets/uie_r/train/input]
+    dataroot_gt: [./datasets/uieb/train/target]
+    dataroot_lq: [./datasets/uieb/train/input]
     geometric_augs: true
 
     filename_tmpl: '{}'
@@ -35,14 +35,16 @@ datasets:
   val:
     name: ValSet
     type: Dataset_PairedImage
-    dataroot_gt: [./datasets/uie_syn/val/target, ./datasets/uie_r/val/target]
-    dataroot_lq: [./datasets/uie_syn/val/input, ./datasets/uie_r/val/input]
+    dataroot_gt: [./datasets/uieb/val/target]
+    dataroot_lq: [./datasets/uieb/val/input]
     io_backend:
       type: disk
 
 # network structures
 network_g:
-  type: LiteEnhanceNet
+  type: UNet
+  inp_channels: 3
+  out_channels: 3
 
 
 # path
@@ -97,6 +99,10 @@ val:
       type: calculate_psnr
       crop_border: 0
       test_y_channel: false
+    ssim:
+      type: calculate_ssim
+      crop_border: 0
+      test_y_channel: false
 
 # logging settings
 logger:
@@ -104,7 +110,8 @@ logger:
   save_checkpoint_freq: !!float 4e3
   use_tb_logger: true
   wandb:
-    project: SYN-UIER_UIE
+    project: UIE-UIEB
+    wandb_run_name: UNet
     resume_id: ~
 
 # dist training settings
