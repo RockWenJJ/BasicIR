@@ -219,7 +219,7 @@ class LUUIE(nn.Module):
         self.decoder1 = DecoderBlock(features[2], features[1])
         self.decoder2 = DecoderBlock(features[1], features[0])
         # out_conv
-        self.out_conv = nn.Conv2d(features[0], out_channels, kernel_size=1, stride=1, padding=1)
+        self.out_conv = nn.Conv2d(features[0], out_channels, kernel_size=1, stride=1, padding=0)
     
     def forward(self, x):
         x = self.in_conv(x)
