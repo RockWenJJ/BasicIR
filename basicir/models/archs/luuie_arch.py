@@ -62,11 +62,11 @@ def get_high_wav_conv(in_channels):
 
     return HH
 class ConvBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, ks=3):
         super(ConvBlock, self).__init__()
         self.dw_conv = nn.Conv2d(in_channels, in_channels, kernel_size=1, stride=1, padding=0, bias=False, groups=in_channels)
-        self.hori_conv = nn.Conv2d(in_channels, in_channels, kernel_size=(1, 3), stride=1, padding=(0, 1), bias=False, groups=in_channels)
-        self.vert_conv = nn.Conv2d(in_channels, in_channels, kernel_size=(3, 1), stride=1, padding=(1, 0), bias=False, groups=in_channels)
+        self.hori_conv = nn.Conv2d(in_channels, in_channels, kernel_size=(1, ks), stride=1, padding=(0, 1), dilation=1, bias=False, groups=in_channels)
+        self.vert_conv = nn.Conv2d(in_channels, in_channels, kernel_size=(ks, 1), stride=1, padding=(1, 0), dilation=1, bias=False, groups=in_channels)
         self.bn = nn.BatchNorm2d(in_channels)
         self.pw_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=False)
         self.relu = nn.ReLU(inplace=False)
@@ -260,6 +260,41 @@ class DecoderBlockv2(nn.Module):
         x = self.calayer(x)
         # x = self.pwconv2(self.relu(x))
         return self.relu(x)
+    
+class EncoderBlockv3(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(EncoderBlockv3, self).__init__()
+        self.axial_depthwise_conv = ConvBlock(in_channels, out_channels, ks=3)
+        self.calayer = CALayer(out_channels)
+        self.pwconv = PointwiseConv(out_channels, out_channels)
+        self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
+
+    def forward(self, x):
+        x = self.axial_depthwise_conv(x)
+        x = self.calayer(x)
+        out0 = x
+        x = self.pwconv(x)
+        x = self.maxpool(x)
+        return out0, x
+
+class DecoderBlockv3(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(DecoderBlockv3, self).__init__()
+        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        self.pwconv = PointwiseConv(in_channels*2, in_channels*2)
+        self.axial_depthwise_conv = ConvBlock(in_channels*2, out_channels)
+        self.calayer = CALayer(out_channels)
+        self.pwconv2 = PointwiseConv(out_channels, out_channels)
+        self.relu = nn.ReLU(inplace=False)
+
+    def forward(self, x, x0):
+        x = self.upsample(x)
+        x = torch.cat([x0, x], dim=1)
+        x = self.pwconv(x)
+        x = self.axial_depthwise_conv(x)
+        x = self.calayer(x)
+        x = self.pwconv2(self.relu(x))
+        return self.relu(x)
 
 class LUUIEv1(nn.Module):
     def __init__(self, in_channels=3, out_channels=3, features=[16, 64, 96]):
@@ -312,9 +347,35 @@ class LUUIEv2(nn.Module):
         x = self.decoder2(x, x0)
         x = self.out_conv(x)
         return x
+    
+class LUUIEv3(nn.Module):
+    def __init__(self, in_channels=3, out_channels=3, features=[32, 48, 96]):
+        super(LUUIEv3, self).__init__()
+        self.in_conv = nn.Conv2d(in_channels, features[0], kernel_size=3, stride=1, padding=1)
+
+        # encoder
+        self.encoder1 = EncoderBlockv3(features[0], features[1])
+        self.encoder2 = EncoderBlockv3(features[1], features[2])
+        # bottleneck
+        self.bottleneck = Bottleneck(features[2], reduction=32)
+        # decoder
+        self.decoder1 = DecoderBlockv3(features[2], features[1])
+        self.decoder2 = DecoderBlockv3(features[1], features[0])
+        # out_conv
+        self.out_conv = nn.Conv2d(features[0], out_channels, kernel_size=1, stride=1, padding=0)
+    
+    def forward(self, x):
+        x = self.in_conv(x)
+        x0, x = self.encoder1(x)
+        x1, x = self.encoder2(x)
+        x = self.bottleneck(x)
+        x = self.decoder1(x, x1)
+        x = self.decoder2(x, x0)
+        x = self.out_conv(x)
+        return x
 
 if __name__ == '__main__':
-    model = LUUIEv2()
+    model = LUUIEv3()
     x = torch.randn(1, 3, 256, 256)
     y = model(x)
     print(y.shape)
