@@ -11,6 +11,7 @@ from .yolov8unet_arch import YOLOv8UNet
 from .liteenhancenet_arch import LiteEnhanceNet
 from .lu2net_arch import LU2Net
 from .luuie_arch import LUUIEv1, LUUIEv2, LUUIEv3
+from .shallowuwnet_arch import ShallowUWNet
 
 # automatically scan and import arch modules
 # scan all the files under the 'archs' folder and collect files ending with
