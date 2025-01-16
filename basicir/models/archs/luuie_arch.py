@@ -374,8 +374,147 @@ class LUUIEv3(nn.Module):
         x = self.out_conv(x)
         return x
 
+class SpatialAttention(nn.Module):
+    def __init__(self, kernel_size=7):
+        super(SpatialAttention, self).__init__()
+        assert kernel_size % 2 == 1, "Kernel size must be odd."
+        padding = kernel_size // 2
+        
+        self.conv = nn.Sequential(
+            nn.Conv2d(2, 1, kernel_size=kernel_size, padding=padding),
+            nn.BatchNorm2d(1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        avg_out = torch.mean(x, dim=1, keepdim=True)
+        max_out, _ = torch.max(x, dim=1, keepdim=True)
+        attention = torch.cat([avg_out, max_out], dim=1)
+        attention = self.conv(attention)
+        return x * attention
+
+class AdaptiveAxialBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_length=5):
+        super().__init__()
+        self.dw_conv = nn.Conv2d(in_channels, in_channels, 1, groups=in_channels)
+        self.hori_conv = nn.Conv2d(
+            in_channels, in_channels, (1, kernel_length), 
+            padding=(0, kernel_length//2), groups=in_channels
+        )
+        self.vert_conv = nn.Conv2d(
+            in_channels, in_channels, (kernel_length, 1), 
+            padding=(kernel_length//2, 0), groups=in_channels
+        )
+        self.bn = nn.BatchNorm2d(in_channels)
+        self.ca = CALayer(in_channels)
+        self.pw_conv = nn.Conv2d(in_channels, out_channels, 1)
+        self.relu = nn.ReLU(inplace=False)
+
+    def forward(self, x):
+        identity = x
+        x1 = self.dw_conv(x)
+        x2 = self.hori_conv(x)
+        x3 = self.vert_conv(x)
+        out = x1 + x2 + x3 + identity
+        out = self.relu(self.bn(out))
+        out = self.ca(out)
+        out = self.pw_conv(out)
+        return self.relu(out)
+
+class EnhancedBottleneck(nn.Module):
+    def __init__(self, channels, reduction=16):
+        super().__init__()
+        self.branch1 = AdaptiveAxialBlock(channels, channels, 3)
+        self.branch2 = AdaptiveAxialBlock(channels, channels, 5)
+        self.branch3 = AdaptiveAxialBlock(channels, channels, 7)
+        self.fusion = nn.Sequential(
+            nn.Conv2d(channels*3, channels, 1),
+            nn.BatchNorm2d(channels),
+            nn.ReLU(inplace=False)
+        )
+        self.ca = CALayer(channels)
+        self.sa = SpatialAttention()
+
+    def forward(self, x):
+        b1 = self.branch1(x)
+        b2 = self.branch2(x)
+        b3 = self.branch3(x)
+        out = self.fusion(torch.cat([b1, b2, b3], dim=1))
+        out = self.ca(out)
+        out = self.sa(out)
+        return out + x
+
+class EncoderBlockv4(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.axial_block = AdaptiveAxialBlock(in_channels, out_channels)
+        self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
+
+    def forward(self, x):
+        x = self.axial_block(x)
+        out0 = x
+        x = self.maxpool(x)
+        return out0, x
+
+class DecoderBlockv4(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        self.pwconv = PointwiseConv(in_channels*2, in_channels*2)
+        self.axial_block = AdaptiveAxialBlock(in_channels*2, out_channels)
+        self.relu = nn.ReLU(inplace=False)
+
+    def forward(self, x, x0):
+        x = self.upsample(x)
+        x = torch.cat([x0, x], dim=1)
+        x = self.pwconv(x)
+        x = self.axial_block(x)
+        return self.relu(x)
+
+class LUUIEv4(nn.Module):
+    def __init__(self, in_channels=3, out_channels=3, features=[32, 48, 96]):
+        super().__init__()
+        self.in_conv = nn.Sequential(
+            nn.Conv2d(in_channels, features[0], 3, padding=1),
+            nn.BatchNorm2d(features[0]),
+            nn.ReLU(inplace=False)
+        )
+        
+        # Encoder
+        self.encoder1 = EncoderBlockv4(features[0], features[1])
+        self.encoder2 = EncoderBlockv4(features[1], features[2])
+        
+        # Enhanced Bottleneck
+        self.bottleneck = EnhancedBottleneck(features[2])
+        
+        # Decoder
+        self.decoder1 = DecoderBlockv4(features[2], features[1])
+        self.decoder2 = DecoderBlockv4(features[1], features[0])
+        
+        # Output conv
+        self.out_conv = nn.Conv2d(features[0], out_channels, kernel_size=1)
+    
+    def forward(self, x):
+        # Initial conv
+        x = self.in_conv(x)
+        
+        # Encoder
+        x0, x = self.encoder1(x)
+        x1, x = self.encoder2(x)
+        
+        # Bottleneck
+        x = self.bottleneck(x)
+        
+        # Decoder
+        x = self.decoder1(x, x1)
+        x = self.decoder2(x, x0)
+        
+        # Output
+        x = self.out_conv(x)
+        return x
+
 if __name__ == '__main__':
-    model = LUUIEv3()
+    model = LUUIEv4()
     x = torch.randn(1, 3, 256, 256)
     y = model(x)
     print(y.shape)

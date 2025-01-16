@@ -10,7 +10,7 @@ from .unet_arch import UNet
 from .yolov8unet_arch import YOLOv8UNet
 from .liteenhancenet_arch import LiteEnhanceNet
 from .lu2net_arch import LU2Net
-from .luuie_arch import LUUIEv1, LUUIEv2, LUUIEv3
+from .luuie_arch import LUUIEv1, LUUIEv2, LUUIEv3, LUUIEv4
 from .shallowuwnet_arch import ShallowUWNet
 
 # automatically scan and import arch modules
@@ -57,5 +57,16 @@ def define_network(opt):
 
 __all__ = [
     'UNet',
+    'LUUIEv1',
+    'LUUIEv2',
+    'LUUIEv3',
+    'LUUIEv4',
+    'ShallowUWNet',
+    'WaterFormer',
+    'CrossSpaceFormer',
+    'Restormer',
+    'YOLOv8UNet',
+    'LiteEnhanceNet',
+    'LU2Net',
     # ... other architectures ...
 ]
