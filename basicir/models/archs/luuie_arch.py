@@ -19,7 +19,7 @@ def get_low_wav_conv(in_channels):
     filter_HL = torch.from_numpy(harr_wav_HL).unsqueeze(0)
     # filter_HH = torch.from_numpy(harr_wav_HH).unsqueeze(0)
 
-    net = nn.Conv2d
+        net = nn.Conv2d
 
     LL = net(in_channels, in_channels,
              kernel_size=2, stride=1, padding=1, bias=False,
