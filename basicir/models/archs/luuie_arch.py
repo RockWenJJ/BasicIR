@@ -513,8 +513,242 @@ class LUUIEv4(nn.Module):
         x = self.out_conv(x)
         return x
 
+class LightAdaptiveConvBlock(nn.Module):
+    """Lightweight adaptive convolution block with efficient feature extraction"""
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        mid_channels = max(in_channels // 2, 16)  # Reduce intermediate channels
+        
+        # Efficient depthwise separable convolutions
+        self.dw_conv = nn.Conv2d(in_channels, in_channels, 3, padding=1, groups=in_channels)
+        self.pw_conv1 = nn.Conv2d(in_channels, mid_channels, 1)
+        
+        # Lightweight axial attention
+        self.hori_conv = nn.Conv2d(mid_channels, mid_channels, (1, 3), 
+                                padding=(0, 1), groups=mid_channels)
+        self.vert_conv = nn.Conv2d(mid_channels, mid_channels, (3, 1), 
+                                padding=(1, 0), groups=mid_channels)
+        
+        self.bn = nn.BatchNorm2d(mid_channels)
+        self.pw_conv2 = nn.Conv2d(mid_channels, out_channels, 1)
+        self.relu = nn.ReLU(inplace=True)
+        
+    def forward(self, x):
+        identity = x
+        x = self.relu(self.pw_conv1(self.dw_conv(x)))
+        x_h = self.hori_conv(x)
+        x_v = self.vert_conv(x)
+        out = x_h + x_v + x
+        out = self.relu(self.bn(out))
+        out = self.pw_conv2(out)
+        return out + (identity if x.size(1) == out.size(1) else 0)
+
+class LightBottleneck(nn.Module):
+    """Lightweight bottleneck with efficient attention mechanism"""
+    def __init__(self, channels, reduction=8):
+        super().__init__()
+        mid_channels = channels // reduction
+        
+        # Simplified channel attention
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(channels, mid_channels),
+            nn.ReLU(inplace=True),
+            nn.Linear(mid_channels, channels),
+            nn.Sigmoid()
+        )
+        
+        # Lightweight feature processing
+        self.conv_block = LightAdaptiveConvBlock(channels, channels)
+        
+    def forward(self, x):
+        identity = x
+        
+        # Efficient channel attention
+        b, c = x.size()[:2]
+        y = self.avg_pool(x).view(b, c)
+        y = self.fc(y).view(b, c, 1, 1)
+        x = x * y
+        
+        # Feature processing
+        x = self.conv_block(x)
+        
+        return x + identity
+
+class LightEncoderBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv_block = LightAdaptiveConvBlock(in_channels, out_channels)
+        self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
+        
+    def forward(self, x):
+        x = self.conv_block(x)
+        skip = x
+        x = self.maxpool(x)
+        return skip, x
+
+class LightDecoderBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        self.conv_block = LightAdaptiveConvBlock(in_channels*2, out_channels)
+        
+    def forward(self, x, skip):
+        x = self.upsample(x)
+        x = torch.cat([skip, x], dim=1)
+        x = self.conv_block(x)
+        return x
+
+class LUUIEv5(nn.Module):
+    def __init__(self, in_channels=3, out_channels=3, features=[32, 48, 96]):
+        super().__init__()
+        self.in_conv = nn.Sequential(
+            nn.Conv2d(in_channels, features[0], 3, padding=1),
+            nn.BatchNorm2d(features[0]),
+            nn.ReLU(inplace=True)
+        )
+        
+        # Encoder with reduced channels
+        self.encoder1 = LightEncoderBlock(features[0], features[1])
+        self.encoder2 = LightEncoderBlock(features[1], features[2])
+        
+        # Lightweight Bottleneck
+        self.bottleneck = LightBottleneck(features[2])
+        
+        # Decoder with reduced channels
+        self.decoder1 = LightDecoderBlock(features[2], features[1])
+        self.decoder2 = LightDecoderBlock(features[1], features[0])
+        
+        # Efficient output conv
+        self.out_conv = nn.Conv2d(features[0], out_channels, kernel_size=1)
+        
+    def forward(self, x):
+        identity = x
+        
+        # Initial features
+        x = self.in_conv(x)
+        
+        # Encoder path
+        s1, x = self.encoder1(x)
+        s2, x = self.encoder2(x)
+        
+        # Bottleneck
+        x = self.bottleneck(x)
+        
+        # Decoder path
+        x = self.decoder1(x, s2)
+        x = self.decoder2(x, s1)
+        
+        # Output with residual connection
+        x = self.out_conv(x)
+        return x + identity
+
+class LUUIEv6(nn.Module):
+    def __init__(self, in_channels=3, features=[32, 48, 96]):
+        super().__init__()
+        self.in_conv = nn.Sequential(
+            nn.Conv2d(in_channels, features[0], 3, padding=1),
+            nn.BatchNorm2d(features[0]),
+            nn.ReLU(inplace=True)
+        )
+        
+        # Encoder with reduced channels
+        self.encoder1 = LightEncoderBlock(features[0], features[1])
+        self.encoder2 = LightEncoderBlock(features[1], features[2])
+        
+        # Lightweight Bottleneck
+        self.bottleneck = LightBottleneck(features[2])
+        
+        # Three decoder heads
+        # 1. Clear Image Decoder
+        self.clear_decoder1 = LightDecoderBlock(features[2], features[1])
+        self.clear_decoder2 = LightDecoderBlock(features[1], features[0])
+        self.clear_out = nn.Conv2d(features[0], 3, kernel_size=1)
+        
+        # 2. Backscatter Decoder
+        self.back_decoder1 = LightDecoderBlock(features[2], features[1])
+        self.back_decoder2 = LightDecoderBlock(features[1], features[0])
+        self.back_out = nn.Conv2d(features[0], 3, kernel_size=1)
+        
+        # 3. Transmission Decoder
+        self.trans_decoder1 = LightDecoderBlock(features[2], features[1])
+        self.trans_decoder2 = LightDecoderBlock(features[1], features[0])
+        self.trans_out = nn.Conv2d(features[0], 1, kernel_size=1)
+        
+        # Initialize weights
+        self._initialize_weights()
+        
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+    
+    def _get_clear_image(self, x, s1, s2):
+        # Clear Image Branch
+        c = self.clear_decoder1(x, s2)
+        c = self.clear_decoder2(c, s1)
+        clear = self.clear_out(c)
+        clear = torch.sigmoid(clear)  # Ensure output is in [0,1]
+        return clear
+        
+    def forward(self, x):
+        # Initial features
+        x = self.in_conv(x)
+        
+        # Encoder path
+        s1, x = self.encoder1(x)
+        s2, x = self.encoder2(x)
+        
+        # Bottleneck
+        x = self.bottleneck(x)
+        
+        # Get clear image
+        clear = self._get_clear_image(x, s1, s2)
+        
+        # During training, also compute backscatter and transmission
+        if self.training:
+            # Backscatter Branch
+            b = self.back_decoder1(x, s2)
+            b = self.back_decoder2(b, s1)
+            back = self.back_out(b)
+            back = torch.sigmoid(back)  # Ensure output is in [0,1]
+            
+            # Transmission Branch
+            t = self.trans_decoder1(x, s2)
+            t = self.trans_decoder2(t, s1)
+            trans = self.trans_out(t)
+            trans = torch.sigmoid(trans)  # Ensure output is in [0,1]
+            
+            return clear, back, trans
+        
+        # During testing, only return clear image
+        return clear
+
 if __name__ == '__main__':
-    model = LUUIEv4()
+    # Test LUUIEv6
+    model = LUUIEv6()
     x = torch.randn(1, 3, 256, 256)
-    y = model(x)
-    print(y.shape)
+    
+    # Test training mode
+    model.train()
+    train_outputs = model(x)
+    print("\nTraining mode:")
+    if isinstance(train_outputs, tuple):
+        clear, back, trans = train_outputs
+        print(f"Clear image shape: {clear.shape}")
+        print(f"Backscatter shape: {back.shape}")
+        print(f"Transmission shape: {trans.shape}")
+    
+    # Test eval mode
+    model.eval()
+    test_output = model(x)
+    print("\nTesting mode:")
+    print(f"Clear image shape: {test_output.shape}")
+    
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"\nTotal parameters: {total_params:,}")
