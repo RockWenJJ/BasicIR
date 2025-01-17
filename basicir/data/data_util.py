@@ -386,3 +386,30 @@ def duf_downsample(x, kernel_size=13, scale=4):
     if squeeze_flag:
         x = x.squeeze(0)
     return x
+
+
+def unpaired_paths_from_folder(folder, key, filename_tmpl):
+    """Generate unpaired paths from folder.
+
+    Args:
+        folder (str): Input folder path.
+        key (str): Key identifying the input folder, e.g., 'lq'.
+        filename_tmpl (str): Template for each filename. Note that the
+            template excludes the file extension. Usually the filename_tmpl is
+            for files in the input folder.
+
+    Returns:
+        list[dict]: A list of dict, where each dict contains the image path
+            with the key.
+    """
+    input_paths = list(scandir(folder))
+    paths = []
+    for idx in range(len(input_paths)):
+        input_path = input_paths[idx]
+        basename, ext = osp.splitext(osp.basename(input_path))
+        input_name = f'{filename_tmpl.format(basename)}{ext}'
+        input_path = osp.join(folder, input_name)
+        assert input_name in input_paths, (f'{input_name} is not in '
+                                       f'{key}_paths.')
+        paths.append(dict([(f'{key}_path', input_path)]))
+    return paths

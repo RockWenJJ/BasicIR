@@ -154,7 +154,7 @@ def imfrombytesDP(content, flag='color', float32=False):
         img = img.astype(np.float32) / 65535.
     return img
 
-def padding(img_lq, img_gt, gt_size):
+def padding(img_lq, img_gt=None, gt_size=(256, 256)):
     h, w, _ = img_lq.shape
 
     h_pad = max(0, gt_size - h)
@@ -164,13 +164,17 @@ def padding(img_lq, img_gt, gt_size):
         return img_lq, img_gt
 
     img_lq = cv2.copyMakeBorder(img_lq, 0, h_pad, 0, w_pad, cv2.BORDER_REFLECT)
-    img_gt = cv2.copyMakeBorder(img_gt, 0, h_pad, 0, w_pad, cv2.BORDER_REFLECT)
+    if img_gt is not None:
+        img_gt = cv2.copyMakeBorder(img_gt, 0, h_pad, 0, w_pad, cv2.BORDER_REFLECT)
     # print('img_lq', img_lq.shape, img_gt.shape)
     if img_lq.ndim == 2:
         img_lq = np.expand_dims(img_lq, axis=2)
-    if img_gt.ndim == 2:
+    if img_gt is not None and img_gt.ndim == 2:
         img_gt = np.expand_dims(img_gt, axis=2)
-    return img_lq, img_gt
+    if img_gt is None:
+        return img_lq
+    else:
+        return img_lq, img_gt
 
 def padding_DP(img_lqL, img_lqR, img_gt, gt_size):
     h, w, _ = img_gt.shape

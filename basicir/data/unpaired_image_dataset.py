@@ -1,20 +1,17 @@
 import random
-import numpy as np
-import torch
-import torch.utils.data as data
-import basicir.data.transforms as transforms
-from basicir.data.data_util import (paired_paths_from_folder,
-                                 paired_paths_from_lmdb,
-                                 paired_paths_from_meta_info_file)
-from basicir.utils import FileClient, imfrombytes, img2tensor
 from pathlib import Path
-from torchvision.transforms import functional as TF
+from torch.utils import data as data
+from torchvision.transforms.functional import normalize
+from basicir.data.data_util import unpaired_paths_from_folder
+from basicir.data.transforms import random_augmentation, random_crop
+from basicir.utils import FileClient, imfrombytes, img2tensor
+from basicir.utils.img_util import padding
 
 class Dataset_UnpairedImage(data.Dataset):
     """Unpaired Image dataset for image restoration.
 
     Read LQ (Low Quality) images only.
-    The pair is ensured by sorted paths.
+    The pair is ensured by 'sorted' function, so please check the name convention.
 
     Args:
         opt (dict): Config for train datasets. It contains the following keys:
@@ -23,6 +20,15 @@ class Dataset_UnpairedImage(data.Dataset):
             mean (list | tuple): Image mean.
             std (list | tuple): Image std.
             geometric_augs (bool): Use geometric augmentations.
+            filename_tmpl (str): Template for each filename. Note that the
+                template excludes the file extension. Default: '{}'.
+            gt_size (int): Cropped patched size for gt patches.
+            use_flip (bool): Use horizontal flips.
+            use_rot (bool): Use rotation (use vertical flip and transposing h
+                and w for implementation).
+
+            scale (bool): Scale, which will be added automatically.
+            phase (str): 'train' or 'val'.
     """
 
     def __init__(self, opt):
@@ -34,6 +40,9 @@ class Dataset_UnpairedImage(data.Dataset):
         self.geometric_augs = opt.get('geometric_augs', False)
 
         self.lq_folder = opt['dataroot_lq']
+        self.filename_tmpl = opt.get('filename_tmpl', '{}')
+
+        # mean and std for normalization
         if 'mean' in opt:
             self.mean = opt['mean']
         else:
@@ -43,58 +52,53 @@ class Dataset_UnpairedImage(data.Dataset):
         else:
             self.std = None
 
-        # Get paths of LQ images
-        self.paths = sorted(list(Path(self.lq_folder).rglob('*')))
-        self.paths = [str(p) for p in self.paths if p.suffix.lower() in ['.png', '.jpg', '.jpeg', '.bmp']]
-        
-        if len(self.paths) == 0:
-            raise ValueError(f'No valid images found in {self.lq_folder}')
+        # Generate image paths
+        if isinstance(self.lq_folder, list):
+            self.paths = []
+            for lq_folder in self.lq_folder:
+                self.paths.extend(unpaired_paths_from_folder(
+                        lq_folder, 'lq',
+                        self.filename_tmpl))
+        else:
+            self.paths = unpaired_paths_from_folder(
+                folder=self.lq_folder,
+                key='lq',
+                filename_tmpl=self.filename_tmpl)
 
     def __getitem__(self, index):
         if self.file_client is None:
             self.file_client = FileClient(
                 self.io_backend_opt.pop('type'), **self.io_backend_opt)
 
-        # Load LQ image
-        lq_path = self.paths[index]
+        # Load lq image
+        lq_path = self.paths[index]['lq_path']
         img_bytes = self.file_client.get(lq_path)
         img_lq = imfrombytes(img_bytes, float32=True)
 
-        # Augmentation for training
-        if self.opt.get('use_flip') or self.opt.get('use_rot'):
-            img_lq = transforms.augment(img_lq, self.opt['use_flip'],
-                                    self.opt['use_rot'])
+        if self.opt['phase'] == 'train':
+            gt_size = self.opt['gt_size']
+            # padding
+            img_lq = padding(img_lq, gt_size=gt_size)
 
-        # Geometric augmentations
-        if self.geometric_augs:
-            # Random crop
-            if random.random() < 0.5:
-                crop_size = random.randint(160, 200)
-                i, j, h, w = transforms.get_random_crop_params(img_lq, (crop_size, crop_size))
-                img_lq = transforms.crop(img_lq, i, j, h, w)
-                img_lq = transforms.resize(img_lq, (256, 256))
+            # random crop
+            img_lq = random_crop(img_lq, gt_size)
+
+            # Geometric augmentations
+            if self.geometric_augs:
+                img_lq = random_augmentation(img_lq)[0]
             
-            # Random rotation
-            if random.random() < 0.5:
-                angle = random.randint(-45, 45)
-                img_lq = transforms.rotate(img_lq, angle)
-            
-            # Random scaling
-            if random.random() < 0.5:
-                scale = random.uniform(0.8, 1.2)
-                new_h = int(img_lq.shape[0] * scale)
-                new_w = int(img_lq.shape[1] * scale)
-                img_lq = transforms.resize(img_lq, (new_h, new_w))
-                img_lq = transforms.center_crop(img_lq, (256, 256))
 
         # BGR to RGB, HWC to CHW, numpy to tensor
         img_lq = img2tensor(img_lq, bgr2rgb=True, float32=True)
 
-        # Normalize
+        # normalize
         if self.mean is not None or self.std is not None:
-            img_lq = transforms.normalize(img_lq, self.mean, self.std)
+            normalize(img_lq, self.mean, self.std, inplace=True)
 
-        return {'lq': img_lq, 'lq_path': lq_path}
+        return {
+            'lq': img_lq,
+            'lq_path': lq_path
+        }
 
     def __len__(self):
         return len(self.paths) 

@@ -273,3 +273,28 @@ def random_augmentation(*args):
     for data in args:
         out.append(data_augmentation(data, flag_aug).copy())
     return out
+
+def random_crop(img, patch_size):
+    """Random crop.
+
+    Args:
+        img (ndarray): Image to be cropped.
+        patch_size (int): Size of the crop.
+
+    Returns:
+        ndarray: Cropped image.
+    """
+    h, w, _ = img.shape
+
+    if h < patch_size or w < patch_size:
+        raise ValueError(f'Image is smaller than patch size: '
+                       f'({h}, {w}) < ({patch_size}, {patch_size})')
+
+    # randomly choose top and left coordinates
+    top = random.randint(0, h - patch_size)
+    left = random.randint(0, w - patch_size)
+
+    # crop patch
+    img = img[top:top + patch_size, left:left + patch_size, ...]
+
+    return img
