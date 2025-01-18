@@ -18,6 +18,8 @@ import numpy as np
 import cv2
 import torch.nn.functional as F
 from functools import partial
+from basicir.models.losses.losses import ColorCastLoss, SaturatedLoss
+from torch import nn
 
 class Mixing_Augment:
     def __init__(self, mixup_beta, use_identity, device):
@@ -74,6 +76,11 @@ class UnsImageRestorationModel(BaseModel):
 
         if self.is_train:
             self.init_training_settings()
+
+        # construct losses
+        self.cri_recon = nn.L1Loss()
+        self.cri_color_cast = ColorCastLoss()
+        self.cri_saturated = SaturatedLoss()
 
     def init_training_settings(self):
         self.net_g.train()
@@ -153,26 +160,52 @@ class UnsImageRestorationModel(BaseModel):
 
     def optimize_parameters(self, current_iter):
         self.optimizer_g.zero_grad()
-        preds = self.net_g(self.lq)
-        if not isinstance(preds, list):
-            preds = [preds]
+        clear, back, trans = self.net_g(self.lq)
 
-        self.output = preds[-1]
+        # redgrade the image
+        alpha = torch.rand(1).to(self.device)
+        redeg_lq = clear * trans * alpha + back
+        new_clear, new_back, new_trans = self.net_g(redeg_lq)
+        # new_back = back
+        # new_trans = trans * alpha
+        # new_clear = clear
 
+        self.output = clear
+
+        total_loss = 0.
         loss_dict = OrderedDict()
-        # pixel loss
-        l_pix = 0.
-        for cri_loss in self.cri_losses:
-            type = cri_loss['type']
-            loss_method = cri_loss['loss']
-            loss = 0
-            for pred in preds:
-                loss += loss_method(pred, self.gt)
+        # Reconstruction loss
+        degrade_pred = clear * trans + back
+        l_recon0 = F.l1_loss(degrade_pred, self.lq)
+        loss_dict['l_recon0'] = l_recon0
+        total_loss += l_recon0
+        redeg_pred = new_clear * new_trans + new_back
+        l_recon1 = F.l1_loss(redeg_pred, redeg_lq)
+        loss_dict['l_recon1'] = l_recon1
+        total_loss += l_recon1
 
-            loss_dict[type] = loss
-            l_pix += loss
+        # Color cast loss
+        l_color_cast = self.cri_color_cast(clear)
+        loss_dict['l_color_cast'] = l_color_cast
+        total_loss += l_color_cast
 
-        l_pix.backward()
+        # Saturated loss
+        l_saturated = self.cri_saturated(clear)
+        loss_dict['l_saturated'] = l_saturated
+        total_loss += l_saturated
+
+        # alignment loss
+        l_clear_align = F.l1_loss(clear, new_clear)
+        loss_dict['l_clear_align'] = l_clear_align
+        total_loss += l_clear_align
+        l_back_align = F.l1_loss(back, new_back)
+        loss_dict['l_back_align'] = l_back_align
+        total_loss += l_back_align
+        l_trans_align = F.l1_loss(trans*alpha, new_trans)
+        loss_dict['l_trans_align'] = l_trans_align
+        total_loss += l_trans_align
+
+        total_loss.backward()
         if self.opt['train']['use_grad_clip']:
             torch.nn.utils.clip_grad_norm_(self.net_g.parameters(), 0.01)
         self.optimizer_g.step()

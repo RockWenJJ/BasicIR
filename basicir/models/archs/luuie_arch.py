@@ -644,85 +644,63 @@ class LUUIEv5(nn.Module):
         return x + identity
 
 class LUUIEv6(nn.Module):
-    def __init__(self, in_channels=3, features=[32, 48, 96]):
-        super().__init__()
-        self.in_conv = nn.Sequential(
-            nn.Conv2d(in_channels, features[0], 3, padding=1),
-            nn.BatchNorm2d(features[0]),
-            nn.ReLU(inplace=True)
-        )
+    def __init__(self, in_channels=3, out_channels=3, features=[32, 48, 96]):
+        super(LUUIEv6, self).__init__()
+        self.in_conv = nn.Conv2d(in_channels, features[0], kernel_size=3, stride=1, padding=1)
+
+        # encoder - reuse from v3
+        self.encoder1 = EncoderBlockv3(features[0], features[1])
+        self.encoder2 = EncoderBlockv3(features[1], features[2])
         
-        # Encoder with reduced channels
-        self.encoder1 = LightEncoderBlock(features[0], features[1])
-        self.encoder2 = LightEncoderBlock(features[1], features[2])
+        # bottleneck - reuse from v3
+        self.bottleneck = Bottleneck(features[2], reduction=32)
         
-        # Lightweight Bottleneck
-        self.bottleneck = LightBottleneck(features[2])
+        # clear image decoder path - reuse from v3
+        self.clear_decoder1 = DecoderBlockv3(features[2], features[1])
+        self.clear_decoder2 = DecoderBlockv3(features[1], features[0])
+        self.clear_out = nn.Conv2d(features[0], out_channels, kernel_size=1)
         
-        # Three decoder heads
-        # 1. Clear Image Decoder
-        self.clear_decoder1 = LightDecoderBlock(features[2], features[1])
-        self.clear_decoder2 = LightDecoderBlock(features[1], features[0])
-        self.clear_out = nn.Conv2d(features[0], 3, kernel_size=1)
+        # backscatter decoder path
+        self.back_decoder1 = DecoderBlockv3(features[2], features[1])
+        self.back_decoder2 = DecoderBlockv3(features[1], features[0])
+        self.back_out = nn.Conv2d(features[0], out_channels, kernel_size=1)
         
-        # 2. Backscatter Decoder
-        self.back_decoder1 = LightDecoderBlock(features[2], features[1])
-        self.back_decoder2 = LightDecoderBlock(features[1], features[0])
-        self.back_out = nn.Conv2d(features[0], 3, kernel_size=1)
-        
-        # 3. Transmission Decoder
-        self.trans_decoder1 = LightDecoderBlock(features[2], features[1])
-        self.trans_decoder2 = LightDecoderBlock(features[1], features[0])
+        # transmission decoder path
+        self.trans_decoder1 = DecoderBlockv3(features[2], features[1])
+        self.trans_decoder2 = DecoderBlockv3(features[1], features[0])
         self.trans_out = nn.Conv2d(features[0], 1, kernel_size=1)
-        
-        # Initialize weights
-        self._initialize_weights()
-        
-    def _initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
     
-    def _get_clear_image(self, x, s1, s2):
-        # Clear Image Branch
-        c = self.clear_decoder1(x, s2)
-        c = self.clear_decoder2(c, s1)
-        clear = self.clear_out(c)
-        clear = torch.sigmoid(clear)  # Ensure output is in [0,1]
-        return clear
-        
+    def _get_clear_image(self, x, x0, x1):
+        x = self.clear_decoder1(x, x1)
+        x = self.clear_decoder2(x, x0)
+        x = self.clear_out(x)
+        return torch.sigmoid(x)
+    
     def forward(self, x):
-        # Initial features
+        # Initial conv
         x = self.in_conv(x)
         
-        # Encoder path
-        s1, x = self.encoder1(x)
-        s2, x = self.encoder2(x)
+        # Encoder
+        x0, x = self.encoder1(x)
+        x1, x = self.encoder2(x)
         
         # Bottleneck
         x = self.bottleneck(x)
         
         # Get clear image
-        clear = self._get_clear_image(x, s1, s2)
+        clear = self._get_clear_image(x, x0, x1)
         
         # During training, also compute backscatter and transmission
         if self.training:
-            # Backscatter Branch
-            b = self.back_decoder1(x, s2)
-            b = self.back_decoder2(b, s1)
-            back = self.back_out(b)
-            back = torch.sigmoid(back)  # Ensure output is in [0,1]
+            # Backscatter path
+            b = self.back_decoder1(x, x1)
+            b = self.back_decoder2(b, x0)
+            back = torch.sigmoid(self.back_out(b))
             
-            # Transmission Branch
-            t = self.trans_decoder1(x, s2)
-            t = self.trans_decoder2(t, s1)
-            trans = self.trans_out(t)
-            trans = torch.sigmoid(trans)  # Ensure output is in [0,1]
+            # Transmission path
+            t = self.trans_decoder1(x, x1)
+            t = self.trans_decoder2(t, x0)
+            trans = torch.sigmoid(self.trans_out(t))
             
             return clear, back, trans
         
