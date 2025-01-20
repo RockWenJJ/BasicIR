@@ -161,7 +161,10 @@ def padding(img_lq, img_gt=None, gt_size=(256, 256)):
     w_pad = max(0, gt_size - w)
     
     if h_pad == 0 and w_pad == 0:
-        return img_lq, img_gt
+        if img_gt is not None:
+            return img_lq, img_gt
+        else:
+            return img_lq
 
     img_lq = cv2.copyMakeBorder(img_lq, 0, h_pad, 0, w_pad, cv2.BORDER_REFLECT)
     if img_gt is not None:

@@ -20,6 +20,7 @@ import torch.nn.functional as F
 from functools import partial
 from basicir.models.losses.losses import ColorCastLoss, SaturatedLoss
 from torch import nn
+from basicir.models.losses.losses import SSIMLoss
 
 class Mixing_Augment:
     def __init__(self, mixup_beta, use_identity, device):
@@ -81,6 +82,7 @@ class UnsImageRestorationModel(BaseModel):
         self.cri_recon = nn.L1Loss()
         self.cri_color_cast = ColorCastLoss()
         self.cri_saturated = SaturatedLoss()
+        self.cri_ssim = SSIMLoss()
 
     def init_training_settings(self):
         self.net_g.train()
@@ -155,6 +157,13 @@ class UnsImageRestorationModel(BaseModel):
 
     def feed_data(self, data):
         self.lq = data['lq'].to(self.device)
+        self.lq_path = data['lq_path']
+        self.in_air_mask = torch.zeros((self.lq.size(0), 1, 1, 1)).to(self.device)
+        self.in_air_count = 0
+        for i, path in enumerate(self.lq_path):
+            if 'in-air' in path:
+                self.in_air_mask[i, 0] = 1
+                self.in_air_count += 1
         if 'gt' in data:
             self.gt = data['gt'].to(self.device)
 
@@ -164,8 +173,8 @@ class UnsImageRestorationModel(BaseModel):
 
         # redgrade the image
         alpha = torch.rand(1).to(self.device)
-        redeg_lq = clear * trans * alpha + back
-        new_clear, new_back, new_trans = self.net_g(redeg_lq)
+        redeg_lq = clear * (trans * alpha + 1 - alpha) + back * alpha
+        new_clear, new_back, new_trans = self.net_g(redeg_lq.detach())
         # new_back = back
         # new_trans = trans * alpha
         # new_clear = clear
@@ -180,30 +189,63 @@ class UnsImageRestorationModel(BaseModel):
         loss_dict['l_recon0'] = l_recon0
         total_loss += l_recon0
         redeg_pred = new_clear * new_trans + new_back
-        l_recon1 = F.l1_loss(redeg_pred, redeg_lq)
+        l_recon1 = F.l1_loss(redeg_pred, redeg_lq.detach())
         loss_dict['l_recon1'] = l_recon1
         total_loss += l_recon1
+        l_recon_clear = F.l1_loss(clear, self.lq) * 0.01
+        loss_dict['l_recon_clear'] = l_recon_clear
+        total_loss += l_recon_clear
 
-        # Color cast loss
-        l_color_cast = self.cri_color_cast(clear)
-        loss_dict['l_color_cast'] = l_color_cast
-        total_loss += l_color_cast
+        # # Color cast loss
+        # l_color_cast = self.cri_color_cast(clear)
+        # loss_dict['l_color_cast'] = l_color_cast * 0.01
+        # total_loss += l_color_cast
 
-        # Saturated loss
-        l_saturated = self.cri_saturated(clear)
-        loss_dict['l_saturated'] = l_saturated
-        total_loss += l_saturated
+        # # Saturated loss
+        # l_saturated = self.cri_saturated(clear)
+        # loss_dict['l_saturated'] = l_saturated
+        # total_loss += l_saturated
 
         # alignment loss
         l_clear_align = F.l1_loss(clear, new_clear)
         loss_dict['l_clear_align'] = l_clear_align
         total_loss += l_clear_align
-        l_back_align = F.l1_loss(back, new_back)
+        l_back_align = F.l1_loss(back * alpha, new_back)
         loss_dict['l_back_align'] = l_back_align
         total_loss += l_back_align
-        l_trans_align = F.l1_loss(trans*alpha, new_trans)
+        l_trans_align = F.l1_loss(trans * alpha + 1 - alpha, new_trans)
         loss_dict['l_trans_align'] = l_trans_align
         total_loss += l_trans_align
+
+
+        # transmision loss
+        l_trans_loss_air = ((trans - 1.0)**2) * self.in_air_mask
+        l_trans_loss_air = torch.mean(l_trans_loss_air.reshape(l_trans_loss_air.size(0), -1), dim=1)
+        l_trans_loss_air = torch.sum(l_trans_loss_air) / self.in_air_count
+        loss_dict['l_trans_loss_air'] = l_trans_loss_air
+        total_loss += l_trans_loss_air
+        # # penalize the transmision when the underwater images' transmission is 1
+        # l_trans_loss_uw = ((trans)**2) * (1 - self.in_air_mask)
+        # l_trans_loss_uw = torch.mean(l_trans_loss_uw.reshape(l_trans_loss_uw.size(0), -1), dim=1)
+        # l_trans_loss_uw = torch.sum(l_trans_loss_uw) / (self.lq.size(0) - self.in_air_count) * 0.01
+        # loss_dict['l_trans_loss_uw'] = l_trans_loss_uw
+        # total_loss += l_trans_loss_uw
+
+        # backscattering loss
+        l_back_loss_air = (back**2) * self.in_air_mask
+        l_back_loss_air = torch.mean(l_back_loss_air.reshape(l_back_loss_air.size(0), -1), dim=1)
+        l_back_loss_air = torch.sum(l_back_loss_air) / self.in_air_count
+        loss_dict['l_back_loss_air'] = l_back_loss_air
+        total_loss += l_back_loss_air
+
+        # # penalize the backscattering when the underwater images' backscattering is 0
+        # l_back_loss_uw = ((back-1)**2) * (1 - self.in_air_mask)
+        # l_back_loss_uw = torch.mean(l_back_loss_uw.reshape(l_back_loss_uw.size(0), -1), dim=1)
+        # l_back_loss_uw = torch.sum(l_back_loss_uw) / (self.lq.size(0) - self.in_air_count) * 0.01
+        # loss_dict['l_back_loss_uw'] = l_back_loss_uw
+        # total_loss += l_back_loss_uw
+
+        loss_dict['total_loss'] = total_loss
 
         total_loss.backward()
         if self.opt['train']['use_grad_clip']:

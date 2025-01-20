@@ -219,10 +219,11 @@ def main():
     data_time, iter_time = time.time(), time.time()
     start_time = time.time()
 
-    # Initialize wandb
+    # Initialize wandb BEFORE the training loop
+    wandb_run = None
     if (opt['logger'].get('wandb') is not None and
             opt['logger']['wandb'].get('project') is not None):
-        wandb.init(
+        wandb_run = wandb.init(
             project=opt['logger']['wandb']['project'],
             name=opt['logger']['wandb'].get('wandb_run_name', 'default_run_name'),
             config=opt
@@ -284,7 +285,7 @@ def main():
             ###-------------------------------------------
 
             # training
-            model.feed_data({'lq': lq})
+            model.feed_data({'lq': lq, 'lq_path': train_data['lq_path']})
             model.optimize_parameters(current_iter)
 
             iter_time = time.time() - iter_time
@@ -297,8 +298,8 @@ def main():
                 log_vars.update(model.get_current_log())
                 msg_logger(log_vars)
 
-                # Wandb logging
-                if opt['logger'].get('wandb'):
+                # Wandb logging - only if wandb was initialized
+                if wandb_run is not None:
                     wandb.log(log_vars)
 
             # save models and training states
@@ -314,7 +315,7 @@ def main():
 
             data_time = time.time()
             iter_time = time.time()
-            train_data = prefetcher.next()
+            # train_data = prefetcher.next()
 
         # end of iter
         epoch += 1
@@ -333,8 +334,8 @@ def main():
     if tb_logger:
         tb_logger.close()
 
-    # Close wandb
-    if opt['logger'].get('wandb'):
+    # Close wandb - only if it was initialized
+    if wandb_run is not None:
         wandb.finish()
 
 

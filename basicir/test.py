@@ -55,7 +55,11 @@ if __name__ == "__main__":
     parameters = opt['network_g']
 
     arch_type = parameters.pop('type')
-    load_arch = run_path(f'./basicir/models/archs/{arch_type.lower()}_arch.py')
+    if arch_type[-2]== 'v':
+        arch_file = arch_type[:-2]
+    else:
+        arch_file = arch_type
+    load_arch = run_path(f'./basicir/models/archs/{arch_file.lower()}_arch.py')
     model = load_arch[arch_type](**parameters)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
