@@ -69,6 +69,7 @@ if __name__ == "__main__":
     loaded_weights = weights['params_ema'] if "params_ema" in weights else weights['params']
     model.load_state_dict(loaded_weights, strict=False)
     model.eval()
+    model.output_all_components = True
 
     img_multiple_of = 8
 
@@ -92,8 +93,9 @@ if __name__ == "__main__":
             try:
                 if args.tile is None:
                     ## Testing on the original resolution image
-                    restored = model(input_)
+                    restored, backscatter, transmission = model(input_)
                 else:
+                    #TODO: modify the codes to make it output all components
                     # test the image tile by tile
                     b, c, h, w = input_.shape
                     tile = min(args.tile, h, w)
@@ -119,19 +121,31 @@ if __name__ == "__main__":
                 restored[:, 0, :, :] = (restored[:, 0, :, :] - restored[:, 0, :, :].min()) / (restored[:, 0, :, :].max() - restored[:, 0, :, :].min())
                 restored[:, 1, :, :] = (restored[:, 1, :, :] - restored[:, 1, :, :].min()) / (restored[:, 1, :, :].max() - restored[:, 1, :, :].min())
                 restored[:, 2, :, :] = (restored[:, 2, :, :] - restored[:, 2, :, :].min()) / (restored[:, 2, :, :].max() - restored[:, 2, :, :].min())
-                # restored = torch.clamp(restored, 0, 1)
+
+                transmission = torch.clamp(transmission, 0, 1)
+                backscatter = torch.clamp(backscatter, 0, 1)
 
                 # Unpad the output
                 restored = restored[:,:,:height,:width]
+                transmission = transmission[:,:,:height,:width]
+                backscatter = backscatter[:,:,:height,:width]
 
                 restored = restored.permute(0, 2, 3, 1).cpu().detach().numpy()
+                transmission = transmission.permute(0, 2, 3, 1).cpu().detach().numpy()
+                backscatter = backscatter.permute(0, 2, 3, 1).cpu().detach().numpy()
+
                 restored = img_as_ubyte(restored[0])
+                transmission = img_as_ubyte(transmission[0])
+                backscatter = img_as_ubyte(backscatter[0])
 
                 f = os.path.splitext(os.path.split(file_)[-1])[0]
 
                 f = os.path.split(file_)[-1]
-
+                f_back = f + '_back.png'
+                f_trans = f + '_trans.png'
                 save_img(os.path.join(output_dir, f), restored)
+                save_img(os.path.join(output_dir, f_trans), transmission)
+                save_img(os.path.join(output_dir, f_back), backscatter)
             except Exception as e:
                 print(e)
 

@@ -1,10 +1,12 @@
-import torch
 import torch.nn as nn
+import torch
+import math
+from basicir.models.archs.restormer_arch import OverlapPatchEmbed, TransformerBlock, Upsample, Downsample
 
 import numpy as np
 
 def get_low_wav_conv(in_channels):
-    """wavelet decomposition using conv2d"""
+    """wavelet decomposition using conv2d with same padding"""
     harr_wav_L = 1 / np.sqrt(2) * np.ones((1, 2))
     harr_wav_H = 1 / np.sqrt(2) * np.ones((1, 2))
     harr_wav_H[0, 0] = -1 * harr_wav_H[0, 0]
@@ -19,48 +21,54 @@ def get_low_wav_conv(in_channels):
     filter_HL = torch.from_numpy(harr_wav_HL).unsqueeze(0)
     # filter_HH = torch.from_numpy(harr_wav_HH).unsqueeze(0)
 
-    net = nn.Conv2d(in_channels, in_channels, kernel_size=2, stride=1, padding=1, bias=False, groups=in_channels)   
+    class WaveletConv(nn.Module):
+        def __init__(self, filter_type):
+            super().__init__()
+            self.conv = nn.Conv2d(in_channels, in_channels,
+                                kernel_size=2, stride=1, padding=1,  # Changed padding to 1
+                                bias=False, groups=in_channels)
+            self.conv.weight.requires_grad = False
+            self.conv.weight.data = filter_type.float().unsqueeze(0).expand(in_channels, -1, -1, -1)
+            
+        def forward(self, x):
+            # Handle the padding: remove extra padded values
+            out = self.conv(x)
+            return out[:, :, :-1, :-1]  # Remove extra padded row and column
 
-    LL = net(in_channels, in_channels,
-             kernel_size=2, stride=1, padding=1, bias=False,
-             groups=in_channels)
-    LH = net(in_channels, in_channels,
-             kernel_size=2, stride=1, padding=1, bias=False,
-             groups=in_channels)
-    HL = net(in_channels, in_channels,
-             kernel_size=2, stride=1, padding=1, bias=False,
-             groups=in_channels)
+    LL = WaveletConv(filter_LL)
+    LH = WaveletConv(filter_LH)
+    HL = WaveletConv(filter_HL)
     # HH = net(in_channels, in_channels,
     #          kernel_size=2, stride=2, padding=0, bias=False,
     #          groups=in_channels)
 
-    LL.weight.requires_grad = False
-    LH.weight.requires_grad = False
-    HL.weight.requires_grad = False
-    # HH.weight.requires_grad = False
-
-    LL.weight.data = filter_LL.float().unsqueeze(0).expand(in_channels, -1, -1, -1)
-    LH.weight.data = filter_LH.float().unsqueeze(0).expand(in_channels, -1, -1, -1)
-    HL.weight.data = filter_HL.float().unsqueeze(0).expand(in_channels, -1, -1, -1)
-    # HH.weight.data = filter_HH.float().unsqueeze(0).expand(in_channels, -1, -1, -1)
-
     return LL, LH, HL
 
 def get_high_wav_conv(in_channels):
-    """wavelet decomposition using conv2d"""
+    """wavelet decomposition using conv2d with same padding"""
     harr_wav_H = 1 / np.sqrt(2) * np.ones((1, 2))
     harr_wav_H[0, 0] = -1 * harr_wav_H[0, 0]
 
     filter_H = torch.from_numpy(harr_wav_H).unsqueeze(0)
 
-    HH = nn.Conv2d(in_channels, in_channels,
-             kernel_size=2, stride=1, padding=1, bias=False,
-             groups=in_channels)
+    class WaveletConv(nn.Module):
+        def __init__(self, filter_type):
+            super().__init__()
+            self.conv = nn.Conv2d(in_channels, in_channels,
+                                kernel_size=2, stride=1, padding=1,  # Changed padding to 1
+                                bias=False, groups=in_channels)
+            self.conv.weight.requires_grad = False
+            self.conv.weight.data = filter_type.float().unsqueeze(0).expand(in_channels, -1, -1, -1)
+            
+        def forward(self, x):
+            # Handle the padding: remove extra padded values
+            out = self.conv(x)
+            return out[:, :, :-1, :-1]  # Remove extra padded row and column
 
-    HH.weight.requires_grad = False
-    HH.weight.data = filter_H.float().unsqueeze(0).expand(in_channels, -1, -1, -1)
+    HH = WaveletConv(filter_H)
 
     return HH
+
 class ConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels, ks=3):
         super(ConvBlock, self).__init__()
@@ -643,69 +651,382 @@ class LUUIEv5(nn.Module):
         x = self.out_conv(x)
         return x + identity
 
+class LowFreqEncoderBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        # Get low frequency wavelet filters
+        self.LL, self.LH, self.HL = get_low_wav_conv(in_channels)
+        
+        # Combine low frequency components
+        self.fusion = nn.Sequential(
+            nn.Conv2d(in_channels * 3, out_channels, 1, padding=0),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=False)
+        )
+        
+        self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.ca = CALayer(out_channels)
+        
+    def forward(self, x):
+        # Apply wavelet decomposition
+        ll = self.LL(x)
+        lh = self.LH(x)
+        hl = self.HL(x)
+        
+        # Combine components
+        x = torch.cat([ll, lh, hl], dim=1)
+        x = self.fusion(x)
+        x = self.ca(x)
+        
+        skip = x
+        x = self.maxpool(x)
+        return skip, x
+
+class LowFreqDecoderBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        
+        # Get low frequency wavelet filters for refinement
+        self.LL, self.LH, self.HL = get_low_wav_conv(in_channels * 2)
+        
+        # Process concatenated features
+        self.fusion = nn.Sequential(
+            nn.Conv2d(in_channels * 2 * 3, out_channels, 1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=False)
+        )
+        
+        self.ca = CALayer(out_channels)
+        
+    def forward(self, x, skip):
+        x = self.upsample(x)
+        x = torch.cat([skip, x], dim=1)
+        
+        # Apply wavelet decomposition on concatenated features
+        ll = self.LL(x)
+        lh = self.LH(x)
+        hl = self.HL(x)
+        
+        # Combine components
+        x = torch.cat([ll, lh, hl], dim=1)
+        x = self.fusion(x)
+        x = self.ca(x)
+        return x
+
+class GaussianBlur(nn.Module):
+    def __init__(self, kernel_size=5, sigma=1.0):
+        super().__init__()
+        # Create a x, y coordinate grid of shape (kernel_size, kernel_size, 2)
+        x_coord = torch.arange(kernel_size)
+        x_grid = x_coord.repeat(kernel_size).view(kernel_size, kernel_size)
+        y_grid = x_grid.t()
+        xy_grid = torch.stack([x_grid, y_grid], dim=-1).float()
+
+        mean = (kernel_size - 1)/2.
+        variance = sigma**2
+
+        # Calculate the 2-dimensional gaussian kernel
+        gaussian_kernel = (1./(2.*math.pi*variance)) * \
+                        torch.exp(-torch.sum((xy_grid - mean)**2., dim=-1) / \
+                        (2*variance))
+
+        # Make sure sum of values in gaussian kernel equals 1.
+        gaussian_kernel = gaussian_kernel / torch.sum(gaussian_kernel)
+
+        # Reshape to 2d depthwise convolutional weight
+        self.gaussian_filter = nn.Conv2d(3, 3, kernel_size, padding=kernel_size//2, groups=3, bias=False)
+        
+        kernel = gaussian_kernel.view(1, 1, kernel_size, kernel_size)
+        kernel = kernel.repeat(3, 1, 1, 1)
+        self.gaussian_filter.weight.data = kernel
+        self.gaussian_filter.weight.requires_grad = False
+
+    def forward(self, x):
+        return self.gaussian_filter(x)
+
 class LUUIEv6(nn.Module):
     def __init__(self, in_channels=3, out_channels=3, features=[32, 48, 96]):
         super(LUUIEv6, self).__init__()
-        self.in_conv = nn.Conv2d(in_channels, features[0], kernel_size=3, stride=1, padding=1)
+        
+        # Gaussian blur for backscatter and transmission branches
+        self.gaussian_blur = GaussianBlur(kernel_size=7, sigma=1.0)
+        
+        # Initial convolutions for each branch
+        self.clear_in_conv = nn.Conv2d(in_channels, features[0], kernel_size=3, stride=1, padding=1)
+        self.back_in_conv = nn.Conv2d(in_channels, features[0], kernel_size=3, stride=1, padding=1)
+        self.trans_in_conv = nn.Conv2d(in_channels, features[0], kernel_size=3, stride=1, padding=1)
 
-        # encoder - reuse from v3
-        self.encoder1 = EncoderBlockv3(features[0], features[1])
-        self.encoder2 = EncoderBlockv3(features[1], features[2])
-        
-        # bottleneck - reuse from v3
-        self.bottleneck = Bottleneck(features[2], reduction=32)
-        
-        # clear image decoder path - reuse from v3
+        # Clear image branch
+        self.clear_encoder1 = EncoderBlockv3(features[0], features[1])
+        self.clear_encoder2 = EncoderBlockv3(features[1], features[2])
+        self.clear_bottleneck = Bottleneck(features[2], reduction=32)
         self.clear_decoder1 = DecoderBlockv3(features[2], features[1])
         self.clear_decoder2 = DecoderBlockv3(features[1], features[0])
         self.clear_out = nn.Conv2d(features[0], out_channels, kernel_size=1)
         
-        # backscatter decoder path
+        # Backscatter branch with low frequency focus
+        self.back_encoder1 = EncoderBlockv3(features[0], features[1])
+        self.back_encoder2 = EncoderBlockv3(features[1], features[2])
+        self.back_bottleneck = Bottleneck(features[2], reduction=32)
         self.back_decoder1 = DecoderBlockv3(features[2], features[1])
         self.back_decoder2 = DecoderBlockv3(features[1], features[0])
         self.back_out = nn.Conv2d(features[0], out_channels, kernel_size=1)
         
-        # transmission decoder path
+        # Transmission branch with low frequency focus
+        self.trans_encoder1 = EncoderBlockv3(features[0], features[1])
+        self.trans_encoder2 = EncoderBlockv3(features[1], features[2])
+        self.trans_bottleneck = Bottleneck(features[2], reduction=32)
         self.trans_decoder1 = DecoderBlockv3(features[2], features[1])
         self.trans_decoder2 = DecoderBlockv3(features[1], features[0])
-        self.trans_out = nn.Conv2d(features[0], 1, kernel_size=1)
+        self.trans_out = nn.Conv2d(features[0], out_channels, kernel_size=1)
+
+        # set the flag of whether to output the backscatter and transmission during testing
+        self.output_all_components = False
     
-    def _get_clear_image(self, x, x0, x1):
+    def _get_clear_image(self, x):
+        # Clear image path
+        x = self.clear_in_conv(x)
+        x0, x = self.clear_encoder1(x)
+        x1, x = self.clear_encoder2(x)
+        x = self.clear_bottleneck(x)
         x = self.clear_decoder1(x, x1)
         x = self.clear_decoder2(x, x0)
         x = self.clear_out(x)
-        return torch.sigmoid(x)
+        return x
+    
+    def _get_backscatter(self, x):
+        # Apply Gaussian blur before backscatter path
+        x = self.gaussian_blur(x)
+        x = self.back_in_conv(x)
+        x0, x = self.back_encoder1(x)
+        x1, x = self.back_encoder2(x)
+        x = self.back_bottleneck(x)
+        x = self.back_decoder1(x, x1)
+        x = self.back_decoder2(x, x0)
+        x = self.back_out(x)
+        return x
+    
+    def _get_transmission(self, x):
+        # Apply Gaussian blur before transmission path
+        # x = self.gaussian_blur(x)
+        x = self.trans_in_conv(x)
+        x0, x = self.trans_encoder1(x)
+        x1, x = self.trans_encoder2(x)
+        x = self.trans_bottleneck(x)
+        x = self.trans_decoder1(x, x1)
+        x = self.trans_decoder2(x, x0)
+        x = self.trans_out(x)
+        return x
     
     def forward(self, x):
-        # Initial conv
-        x = self.in_conv(x)
-        
-        # Encoder
-        x0, x = self.encoder1(x)
-        x1, x = self.encoder2(x)
-        
-        # Bottleneck
-        x = self.bottleneck(x)
-        
         # Get clear image
-        clear = self._get_clear_image(x, x0, x1)
+        clear = self._get_clear_image(x)
         
         # During training, also compute backscatter and transmission
         if self.training:
-            # Backscatter path
-            b = self.back_decoder1(x, x1)
-            b = self.back_decoder2(b, x0)
-            back = torch.sigmoid(self.back_out(b))
-            
-            # Transmission path
-            t = self.trans_decoder1(x, x1)
-            t = self.trans_decoder2(t, x0)
-            trans = torch.sigmoid(self.trans_out(t))
-            
+            back = self._get_backscatter(x)
+            trans = self._get_transmission(x)
             return clear, back, trans
         
-        # During testing, only return clear image
-        return clear
+        # During testing, only return clear image unless output_all_components is True
+        if self.output_all_components:
+            back = self._get_backscatter(x)
+            trans = self._get_transmission(x)
+            return clear, back, trans
+        else:
+            return clear
+
+class LUUIEv7(nn.Module):
+    def __init__(self, in_channels=3, out_channels=3, features=[32, 64, 128]):
+        super(LUUIEv7, self).__init__()
+        
+        # Gaussian blur for backscatter and transmission branches
+        self.gaussian_blur = GaussianBlur(kernel_size=5, sigma=1.0)
+        
+        # Clear Image Branch (Restormer-style)
+        self.clear_patch_embed = OverlapPatchEmbed(in_channels, features[0])
+        
+        # Clear Image Encoder (2 stages)
+        self.clear_encoder1 = nn.Sequential(*[TransformerBlock(dim=features[0], num_heads=1, 
+            ffn_expansion_factor=2.66, bias=False, LayerNorm_type='WithBias') 
+            for i in range(2)])
+        
+        self.clear_down1_2 = Downsample(features[0])
+        self.clear_encoder2 = nn.Sequential(*[TransformerBlock(dim=features[1], num_heads=2, 
+            ffn_expansion_factor=2.66, bias=False, LayerNorm_type='WithBias') 
+            for i in range(2)])
+        
+        # Clear Image Bottleneck
+        self.clear_bottleneck = nn.Sequential(*[TransformerBlock(dim=features[1], num_heads=2, 
+            ffn_expansion_factor=2.66, bias=False, LayerNorm_type='WithBias') 
+            for i in range(2)])
+
+        # Clear Image Decoder (2 stages)
+        self.clear_up2_1 = Upsample(features[1])
+        self.clear_reduce_chan_level1 = nn.Conv2d(features[1], features[0], kernel_size=1, bias=False)
+        self.clear_decoder1 = nn.Sequential(*[TransformerBlock(dim=features[0], num_heads=1, 
+            ffn_expansion_factor=2.66, bias=False, LayerNorm_type='WithBias') 
+            for i in range(2)])
+        
+        self.clear_refinement = nn.Sequential(*[TransformerBlock(dim=features[0], num_heads=1, 
+            ffn_expansion_factor=2.66, bias=False, LayerNorm_type='WithBias') 
+            for i in range(2)])
+        
+        self.clear_output = nn.Conv2d(features[0], out_channels, kernel_size=3, stride=1, padding=1, bias=False)
+
+        # Backscatter Branch (Original LUUIEv6 style)
+        self.back_in_conv = nn.Conv2d(in_channels, features[0], kernel_size=3, stride=1, padding=1)
+        self.back_encoder1 = EncoderBlockv3(features[0], features[1])
+        self.back_encoder2 = EncoderBlockv3(features[1], features[2])
+        self.back_bottleneck = Bottleneck(features[2], reduction=32)
+        self.back_decoder1 = DecoderBlockv3(features[2], features[1])
+        self.back_decoder2 = DecoderBlockv3(features[1], features[0])
+        self.back_out = nn.Conv2d(features[0], out_channels, kernel_size=1)
+        
+        # Transmission Branch (Original LUUIEv6 style)
+        self.trans_in_conv = nn.Conv2d(in_channels, features[0], kernel_size=3, stride=1, padding=1)
+        self.trans_encoder1 = EncoderBlockv3(features[0], features[1])
+        self.trans_encoder2 = EncoderBlockv3(features[1], features[2])
+        self.trans_bottleneck = Bottleneck(features[2], reduction=32)
+        self.trans_decoder1 = DecoderBlockv3(features[2], features[1])
+        self.trans_decoder2 = DecoderBlockv3(features[1], features[0])
+        self.trans_out = nn.Conv2d(features[0], out_channels, kernel_size=1)
+
+        self.output_all_components = False
+
+    def _get_clear_image(self, x):
+        # Encoder
+        inp_enc_level1 = self.clear_patch_embed(x)
+        out_enc_level1 = self.clear_encoder1(inp_enc_level1)
+        
+        inp_enc_level2 = self.clear_down1_2(out_enc_level1)
+        out_enc_level2 = self.clear_encoder2(inp_enc_level2)
+
+        # Bottleneck
+        latent = self.clear_bottleneck(out_enc_level2)
+
+        # Decoder
+        inp_dec_level1 = self.clear_up2_1(latent)
+        inp_dec_level1 = torch.cat([inp_dec_level1, out_enc_level1], 1)
+        inp_dec_level1 = self.clear_reduce_chan_level1(inp_dec_level1)
+        out_dec_level1 = self.clear_decoder1(inp_dec_level1)
+        
+        out_dec_level1 = self.clear_refinement(out_dec_level1)
+        out = self.clear_output(out_dec_level1)
+        
+        return out + x
+
+    def _get_backscatter(self, x):
+        x = self.back_in_conv(x)
+        x0, x = self.back_encoder1(x)
+        x1, x = self.back_encoder2(x)
+        x = self.back_bottleneck(x)
+        x = self.back_decoder1(x, x1)
+        x = self.back_decoder2(x, x0)
+        x = self.back_out(x)
+        return x
+    
+    def _get_transmission(self, x):
+        x = self.trans_in_conv(x)
+        x0, x = self.trans_encoder1(x)
+        x1, x = self.trans_encoder2(x)
+        x = self.trans_bottleneck(x)
+        x = self.trans_decoder1(x, x1)
+        x = self.trans_decoder2(x, x0)
+        x = self.trans_out(x)
+        return x
+
+    def forward(self, x):
+        # Get clear image using Restormer structure
+        clear = self._get_clear_image(x)
+        
+        if self.training or self.output_all_components:
+            # Get backscatter and transmission using original LUUIEv6 structure
+            back = self._get_backscatter(x)
+            trans = self._get_transmission(x)
+            return clear, back, trans
+        else:
+            return clear
+
+class LUUIEv8(nn.Module):
+    def __init__(self, in_channels=3, out_channels=3, features=[24, 48, 96]):
+        super(LUUIEv8, self).__init__()
+        
+        # Create three identical Restormer-style branches
+        self.clear_branch = self._create_branch(in_channels, out_channels, features)
+        self.back_branch = self._create_branch(in_channels, out_channels, features)
+        self.trans_branch = self._create_branch(in_channels, out_channels, features)  # transmission has 1 output channel
+
+        self.output_all_components = False
+
+    def _create_branch(self, in_channels, out_channels, features):
+        return nn.ModuleDict({
+            # Patch Embedding
+            'patch_embed': OverlapPatchEmbed(in_channels, features[0]),
+            
+            # Encoder (2 stages)
+            'encoder1': nn.Sequential(*[TransformerBlock(dim=features[0], num_heads=1, 
+                ffn_expansion_factor=2.66, bias=False, LayerNorm_type='WithBias') 
+                for i in range(2)]),
+            
+            'down1_2': Downsample(features[0]),
+            'encoder2': nn.Sequential(*[TransformerBlock(dim=features[1], num_heads=2, 
+                ffn_expansion_factor=2.66, bias=False, LayerNorm_type='WithBias') 
+                for i in range(2)]),
+            
+            # Bottleneck
+            'bottleneck': nn.Sequential(*[TransformerBlock(dim=features[1], num_heads=2, 
+                ffn_expansion_factor=2.66, bias=False, LayerNorm_type='WithBias') 
+                for i in range(2)]),
+
+            # Decoder (2 stages)
+            'up2_1': Upsample(features[1]),
+            'reduce_chan_level1': nn.Conv2d(features[1], features[0], kernel_size=1, bias=False),
+            'decoder1': nn.Sequential(*[TransformerBlock(dim=features[0], num_heads=1, 
+                ffn_expansion_factor=2.66, bias=False, LayerNorm_type='WithBias') 
+                for i in range(2)]),
+            
+            'refinement': nn.Sequential(*[TransformerBlock(dim=features[0], num_heads=1, 
+                ffn_expansion_factor=2.66, bias=False, LayerNorm_type='WithBias') 
+                for i in range(2)]),
+            
+            'output': nn.Conv2d(features[0], out_channels, kernel_size=3, stride=1, padding=1, bias=False)
+        })
+
+    def _process_branch(self, x, branch, add_identity=False):
+        # Encoder
+        inp_enc_level1 = branch['patch_embed'](x)
+        out_enc_level1 = branch['encoder1'](inp_enc_level1)
+        
+        inp_enc_level2 = branch['down1_2'](out_enc_level1)
+        out_enc_level2 = branch['encoder2'](inp_enc_level2)
+
+        # Bottleneck
+        latent = branch['bottleneck'](out_enc_level2)
+
+        # Decoder
+        inp_dec_level1 = branch['up2_1'](latent)
+        inp_dec_level1 = torch.cat([inp_dec_level1, out_enc_level1], 1)
+        inp_dec_level1 = branch['reduce_chan_level1'](inp_dec_level1)
+        out_dec_level1 = branch['decoder1'](inp_dec_level1)
+        
+        out_dec_level1 = branch['refinement'](out_dec_level1)
+        out = branch['output'](out_dec_level1)
+        
+        return out + x if add_identity else out
+
+    def forward(self, x):
+        # Process clear image branch (with identity connection)
+        clear = self._process_branch(x, self.clear_branch, add_identity=True)
+        
+        if self.training or self.output_all_components:
+            # Process backscatter and transmission branches (without identity connection)
+            back = self._process_branch(x, self.back_branch, add_identity=False)
+            trans = self._process_branch(x, self.trans_branch, add_identity=False)
+            return clear, back, trans
+        else:
+            return clear
 
 if __name__ == '__main__':
     # Test LUUIEv6
