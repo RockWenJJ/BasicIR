@@ -9,7 +9,7 @@ from .restormer_arch import Restormer
 from .unet_arch import UNet
 from .yolov8unet_arch import YOLOv8UNet
 from .liteenhancenet_arch import LiteEnhanceNet
-from .lu2net_arch import LU2Net
+from .lu2net_arch import LU2Net, LU2Net_Bottleneck
 from .luuie_arch import LUUIEv1, LUUIEv2, LUUIEv3, LUUIEv4, LUUIEv5, LUUIEv6, LUUIEv7, LUUIEv8
 from .shallowuwnet_arch import ShallowUWNet
 
@@ -72,5 +72,6 @@ __all__ = [
     'YOLOv8UNet',
     'LiteEnhanceNet',
     'LU2Net',
+    'LU2Net_Bottleneck',
     # ... other architectures ...
 ]
