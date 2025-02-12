@@ -222,44 +222,54 @@ class UnsImageRestorationModel(BaseModel):
         l_trans_align = F.l1_loss(trans * alpha + 1 - alpha, new_trans)
         loss_dict['l_trans_align'] = l_trans_align
         total_loss += l_trans_align
+
+        # uw_var_loss
+        l_uw_var = self.uw_var_loss(trans, back, self.in_air_mask, self.in_air_count)
+        loss_dict['l_uw_var'] = l_uw_var
+        total_loss += l_uw_var
+
+        # uw_mean_loss
+        l_uw_mean = self.uw_mean_loss(trans, back, self.in_air_mask, self.in_air_count)
+        loss_dict['l_uw_mean'] = l_uw_mean
+        total_loss += l_uw_mean
         
 
-        # penalize the transmission if its variance is too low (only for underwater images)
-        trans_mean = torch.mean(trans, dim=[2, 3], keepdim=True)  # [B,C,1,1]
-        trans_var = torch.mean((trans - trans_mean) ** 2, dim=[2, 3])  # [B,C]
-        trans_var = torch.mean(trans_var * (1 - self.in_air_mask.reshape(-1, 1))) # only consider underwater images
-        l_trans_var = torch.exp(-trans_var * 10.0)  # exponential penalty for low variance
-        if self.lq.size(0) > self.in_air_count:  # normalize by underwater image count
-            l_trans_var = l_trans_var * self.lq.size(0) / (self.lq.size(0) - self.in_air_count)
-        loss_dict['l_trans_var'] = l_trans_var
-        total_loss += l_trans_var
+        # # penalize the transmission if its variance is too low (only for underwater images)
+        # trans_mean = torch.mean(trans, dim=[2, 3], keepdim=True)  # [B,C,1,1]
+        # trans_var = torch.mean((trans - trans_mean) ** 2, dim=[2, 3])  # [B,C]
+        # trans_var = torch.mean(trans_var * (1 - self.in_air_mask.reshape(-1, 1))) # only consider underwater images
+        # l_trans_var = torch.exp(-trans_var * 10.0)  # exponential penalty for low variance
+        # if self.lq.size(0) > self.in_air_count:  # normalize by underwater image count
+        #     l_trans_var = l_trans_var * self.lq.size(0) / (self.lq.size(0) - self.in_air_count)
+        # loss_dict['l_trans_var'] = l_trans_var
+        # total_loss += l_trans_var
 
-        # penalize the transmission if its mean is too high (only for underwater images)
-        trans_mean = torch.mean(trans, dim=[2, 3])  # [B, 1]
-        l_trans_mean = torch.mean(torch.sum(torch.relu(trans_mean - 0.7), dim=1, keepdim=True) * (1 - self.in_air_mask.reshape(-1, 1)))
-        if self.lq.size(0) > self.in_air_count:  # normalize by underwater image count
-            l_trans_mean = l_trans_mean * self.lq.size(0) / (self.lq.size(0) - self.in_air_count)
-        loss_dict['l_trans_mean'] = l_trans_mean
-        total_loss += l_trans_mean
+        # # penalize the transmission if its mean is too high (only for underwater images)
+        # trans_mean = torch.mean(trans, dim=[2, 3])  # [B, 1]
+        # l_trans_mean = torch.mean(torch.sum(torch.relu(trans_mean - 0.7), dim=1, keepdim=True) * (1 - self.in_air_mask.reshape(-1, 1)))
+        # if self.lq.size(0) > self.in_air_count:  # normalize by underwater image count
+        #     l_trans_mean = l_trans_mean * self.lq.size(0) / (self.lq.size(0) - self.in_air_count)
+        # loss_dict['l_trans_mean'] = l_trans_mean
+        # total_loss += l_trans_mean
 
-        # penalize the backscatter if its variance is too low (only for underwater images)
-        back_mean = torch.mean(back, dim=[2, 3], keepdim=True)  # [B,C,1,1]
-        back_var = torch.mean((back - back_mean) ** 2, dim=[2, 3])  # [B,C]
-        back_var = torch.mean(back_var * (1 - self.in_air_mask.reshape(-1, 1)))  # only consider underwater images
-        l_back_var = torch.exp(-back_var * 10.0)  # exponential penalty for low variance
-        if self.lq.size(0) > self.in_air_count:  # normalize by underwater image count
-            l_back_var = l_back_var * self.lq.size(0) / (self.lq.size(0) - self.in_air_count)
-        loss_dict['l_back_var'] = l_back_var
-        total_loss += l_back_var
+        # # penalize the backscatter if its variance is too low (only for underwater images)
+        # back_mean = torch.mean(back, dim=[2, 3], keepdim=True)  # [B,C,1,1]
+        # back_var = torch.mean((back - back_mean) ** 2, dim=[2, 3])  # [B,C]
+        # back_var = torch.mean(back_var * (1 - self.in_air_mask.reshape(-1, 1)))  # only consider underwater images
+        # l_back_var = torch.exp(-back_var * 10.0)  # exponential penalty for low variance
+        # if self.lq.size(0) > self.in_air_count:  # normalize by underwater image count
+        #     l_back_var = l_back_var * self.lq.size(0) / (self.lq.size(0) - self.in_air_count)
+        # loss_dict['l_back_var'] = l_back_var
+        # total_loss += l_back_var
 
-        # penalize the backscatter if its mean deviates from input image mean (only for underwater images)
-        back_mean = torch.mean(back, dim=[2, 3])  # [B, c]
-        input_mean = torch.mean(self.lq, dim=[2, 3])  # [B, c]
-        l_back_mean = torch.mean(torch.sum(torch.abs(back_mean - input_mean), dim=1, keepdim=True) * (1 - self.in_air_mask.reshape(-1, 1)))
-        if self.lq.size(0) > self.in_air_count:  # normalize by underwater image count
-            l_back_mean = l_back_mean * self.lq.size(0) / (self.lq.size(0) - self.in_air_count)
-        loss_dict['l_back_mean'] = l_back_mean
-        total_loss += l_back_mean
+        # # penalize the backscatter if its mean deviates from input image mean (only for underwater images)
+        # back_mean = torch.mean(back, dim=[2, 3])  # [B, c]
+        # input_mean = torch.mean(self.lq, dim=[2, 3])  # [B, c]
+        # l_back_mean = torch.mean(torch.sum(torch.abs(back_mean - input_mean), dim=1, keepdim=True) * (1 - self.in_air_mask.reshape(-1, 1)))
+        # if self.lq.size(0) > self.in_air_count:  # normalize by underwater image count
+        #     l_back_mean = l_back_mean * self.lq.size(0) / (self.lq.size(0) - self.in_air_count)
+        # loss_dict['l_back_mean'] = l_back_mean
+        # total_loss += l_back_mean
 
         # # align backscatter with complementary transmission scaled by input mean (only for underwater images)
         # input_mean = torch.mean(self.lq, dim=[2, 3], keepdim=True)  # [B, C, 1, 1]
@@ -310,6 +320,78 @@ class UnsImageRestorationModel(BaseModel):
 
         if self.ema_decay > 0:
             self.model_ema(decay=self.ema_decay)
+
+    def uw_var_loss(self, trans, back, in_air_mask, in_air_count, lambda_var=0.1, min_variance=0.01):
+        """
+        连续型的水下图像方差损失，鼓励水下图像的 T 和 B 的方差保持较大。
+        
+        Args:
+            trans (torch.Tensor): 形状为 (B, C, H, W) 的预测传输图。
+            back (torch.Tensor): 形状为 (B, C, H, W) 的预测散射图。
+            in_air_mask (torch.Tensor): 形状为 (B, 1, 1, 1) 的二值 mask，1 表示 in-air 图像。
+            in_air_count (int): batch 中 in-air 图像的数量。
+            lambda_var (float): 方差损失权重。
+            min_variance (float): 期望的最小方差（目标值）。
+            
+        Returns:
+            torch.Tensor: 标量损失。
+        """
+        # 计算 underwater mask 与数量
+        uw_mask = 1 - in_air_mask
+        uw_count = trans.shape[0] - in_air_count
+
+        # 计算 underwater 图像的像素级均值和方差
+        def compute_variance(x, mask, count):
+            # 按 mask 计算均值（保留通道维度）
+            mean_x = (x * mask).sum(dim=(0, 2, 3), keepdim=True) / (count + 1e-6)
+            # 计算方差
+            var_x = ((x - mean_x) ** 2 * mask).sum(dim=(0, 2, 3)) / (count + 1e-6)
+            return var_x.mean()  # 返回标量
+
+        var_trans_uw = compute_variance(trans, uw_mask, uw_count)
+        var_back_uw = compute_variance(back, uw_mask, uw_count)
+
+        # 定义连续型损失：1/(variance) 的形式
+        l_var_trans = min_variance / (var_trans_uw + 1e-6)
+        l_var_back  = min_variance / (var_back_uw + 1e-6)
+
+        # 总的水下方差损失
+        uw_loss = lambda_var * (l_var_trans + l_var_back)
+        return uw_loss
+    
+
+
+    def uw_mean_loss(self, trans, back, in_air_mask, in_air_count, lambda_mean=0.1, target_margin=0.3):
+        """
+        连续型的水下图像均值损失，鼓励 underwater 图像的 T 和 B 均值与 in-air 图像有较大差距。
+        """
+        # 计算 underwater mask 与数量
+        uw_mask = 1 - in_air_mask
+        uw_count = trans.shape[0] - in_air_count
+
+        def compute_mean(x, mask, count):
+            # 确保返回的是每个通道的均值
+            return (x * mask).sum(dim=(0, 2, 3)) / (count + 1e-6)  # [C]
+
+        # 对于传输图，我们期望 in-air 的均值大于 underwater 的均值
+        trans_air_mean = compute_mean(trans, in_air_mask, in_air_count)  # [1] or [C]
+        trans_uw_mean  = compute_mean(trans, uw_mask, uw_count)          # [1] or [C]
+        
+        # 对于散射图，我们期望 underwater 的均值大于 in-air 的均值
+        back_air_mean = compute_mean(back, in_air_mask, in_air_count)    # [C]
+        back_uw_mean  = compute_mean(back, uw_mask, uw_count)           # [C]
+
+        # 计算均值差异（注意差值可能为负，因此取 ReLU 保证非负）
+        diff_trans = F.relu(trans_air_mean - trans_uw_mean)  # 希望尽可能大
+        diff_back  = F.relu(back_uw_mean - back_air_mean)   # 希望尽可能大
+
+        # 定义连续型均值损失，差值越小，损失越大；差值越大，损失越小（但不完全为0）
+        l_mean_trans = target_margin / (diff_trans.mean() + target_margin + 1e-6)
+        l_mean_back  = target_margin / (diff_back.mean() + target_margin + 1e-6)
+
+        # 返回标量损失
+        return lambda_mean * (l_mean_trans + l_mean_back)
+
 
     def pad_test(self, window_size):        
         scale = self.opt.get('scale', 1)
