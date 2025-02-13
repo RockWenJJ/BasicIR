@@ -21,6 +21,11 @@ def load_img(filepath):
 def save_img(filepath, img):
     cv2.imwrite(filepath,cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
 
+def normalize_image(x):
+    x_min = x.min(dim=1, keepdim=True)[0].min(dim=2, keepdim=True)[0].min(dim=3, keepdim=True)[0]
+    x_max = x.max(dim=1, keepdim=True)[0].max(dim=2, keepdim=True)[0].max(dim=3, keepdim=True)[0]
+    return (x - x_min) / (x_max - x_min)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Test Imge Enhancement on your own images.')
     parser.add_argument('--config', type=str, required=True, help='Path to the config file')
@@ -117,35 +122,60 @@ if __name__ == "__main__":
                             E[..., h_idx:(h_idx+tile), w_idx:(w_idx+tile)].add_(out_patch)
                             W[..., h_idx:(h_idx+tile), w_idx:(w_idx+tile)].add_(out_patch_mask)
                     restored = E.div_(W)
-                
-                restored[:, 0, :, :] = (restored[:, 0, :, :] - restored[:, 0, :, :].min()) / (restored[:, 0, :, :].max() - restored[:, 0, :, :].min())
-                restored[:, 1, :, :] = (restored[:, 1, :, :] - restored[:, 1, :, :].min()) / (restored[:, 1, :, :].max() - restored[:, 1, :, :].min())
-                restored[:, 2, :, :] = (restored[:, 2, :, :] - restored[:, 2, :, :].min()) / (restored[:, 2, :, :].max() - restored[:, 2, :, :].min())
 
-                transmission = torch.clamp(transmission, 0, 1)
-                backscatter = torch.clamp(backscatter, 0, 1)
+                reconstructed = restored * transmission + backscatter
+
+                restored = normalize_image(restored)
+                transmission = normalize_image(transmission)
+                backscatter = normalize_image(backscatter)
+                reconstructed = normalize_image(reconstructed)
+                
+                # restored[:, 0, :, :] = (restored[:, 0, :, :] - restored[:, 0, :, :].min()) / (restored[:, 0, :, :].max() - restored[:, 0, :, :].min())
+                # restored[:, 1, :, :] = (restored[:, 1, :, :] - restored[:, 1, :, :].min()) / (restored[:, 1, :, :].max() - restored[:, 1, :, :].min())
+                # restored[:, 2, :, :] = (restored[:, 2, :, :] - restored[:, 2, :, :].min()) / (restored[:, 2, :, :].max() - restored[:, 2, :, :].min())
+
+                # transmission[:, 0, :, :] = (transmission[:, 0, :, :] - transmission[:, 0, :, :].min()) / (transmission[:, 0, :, :].max() - transmission[:, 0, :, :].min())
+                # transmission[:, 1, :, :] = (transmission[:, 1, :, :] - transmission[:, 1, :, :].min()) / (transmission[:, 1, :, :].max() - transmission[:, 1, :, :].min())
+                # transmission[:, 2, :, :] = (transmission[:, 2, :, :] - transmission[:, 2, :, :].min()) / (transmission[:, 2, :, :].max() - transmission[:, 2, :, :].min())
+
+                # backscatter[:, 0, :, :] = (backscatter[:, 0, :, :] - backscatter[:, 0, :, :].min()) / (backscatter[:, 0, :, :].max() - backscatter[:, 0, :, :].min())
+                # backscatter[:, 1, :, :] = (backscatter[:, 1, :, :] - backscatter[:, 1, :, :].min()) / (backscatter[:, 1, :, :].max() - backscatter[:, 1, :, :].min())
+                # backscatter[:, 2, :, :] = (backscatter[:, 2, :, :] - backscatter[:, 2, :, :].min()) / (backscatter[:, 2, :, :].max() - backscatter[:, 2, :, :].min())
+
+                # # reconstruct
+                # reconstructed[:, 0, :, :] = (reconstructed[:, 0, :, :] - reconstructed[:, 0, :, :].min()) / (reconstructed[:, 0, :, :].max() - reconstructed[:, 0, :, :].min())
+                # reconstructed[:, 1, :, :] = (reconstructed[:, 1, :, :] - reconstructed[:, 1, :, :].min()) / (reconstructed[:, 1, :, :].max() - reconstructed[:, 1, :, :].min())
+                # reconstructed[:, 2, :, :] = (reconstructed[:, 2, :, :] - reconstructed[:, 2, :, :].min()) / (reconstructed[:, 2, :, :].max() - reconstructed[:, 2, :, :].min())
+
+                # transmission = torch.clamp(transmission, 0, 1)
+                # backscatter = torch.clamp(backscatter, 0, 1)
 
                 # Unpad the output
                 restored = restored[:,:,:height,:width]
                 transmission = transmission[:,:,:height,:width]
                 backscatter = backscatter[:,:,:height,:width]
+                reconstructed = reconstructed[:,:,:height,:width]
 
                 restored = restored.permute(0, 2, 3, 1).cpu().detach().numpy()
                 transmission = transmission.permute(0, 2, 3, 1).cpu().detach().numpy()
                 backscatter = backscatter.permute(0, 2, 3, 1).cpu().detach().numpy()
+                reconstructed = reconstructed.permute(0, 2, 3, 1).cpu().detach().numpy()
 
                 restored = img_as_ubyte(restored[0])
                 transmission = img_as_ubyte(transmission[0])
                 backscatter = img_as_ubyte(backscatter[0])
+                reconstructed = img_as_ubyte(reconstructed[0])
 
                 f = os.path.splitext(os.path.split(file_)[-1])[0]
 
                 f = os.path.split(file_)[-1]
                 f_back = f + '_back.png'
                 f_trans = f + '_trans.png'
+                f_recon = f + '_recon.png'
                 save_img(os.path.join(output_dir, f), restored)
                 save_img(os.path.join(output_dir, f_trans), transmission)
                 save_img(os.path.join(output_dir, f_back), backscatter)
+                save_img(os.path.join(output_dir, f_recon), reconstructed)
             except Exception as e:
                 print(e)
 

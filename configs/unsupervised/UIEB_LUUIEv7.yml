@@ -107,8 +107,8 @@ logger:
   save_checkpoint_freq: !!float 1e3
   use_tb_logger: true
   wandb:
-    project: UIEB-UNSUPERVISED
-    wandb_run_name: UIEB-LUUIEv7
+    project: ~ #UIEB-UNSUPERVISED
+    wandb_run_name: ~ #UIEB-LUUIEv7
     resume_id: ~
 
 # dist training settings

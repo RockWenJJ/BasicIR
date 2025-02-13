@@ -753,9 +753,18 @@ class LUUIEv6(nn.Module):
         self.gaussian_blur = GaussianBlur(kernel_size=7, sigma=1.0)
         
         # Initial convolutions for each branch
-        self.clear_in_conv = nn.Conv2d(in_channels, features[0], kernel_size=3, stride=1, padding=1)
-        self.back_in_conv = nn.Conv2d(in_channels, features[0], kernel_size=3, stride=1, padding=1)
-        self.trans_in_conv = nn.Conv2d(in_channels, features[0], kernel_size=3, stride=1, padding=1)
+        self.clear_in_conv = nn.Sequential(
+            nn.ReflectionPad2d(1),
+            nn.Conv2d(in_channels, features[0], kernel_size=3, stride=1, padding=0)
+        )
+        self.back_in_conv = nn.Sequential(
+            nn.ReflectionPad2d(1),
+            nn.Conv2d(in_channels, features[0], kernel_size=3, stride=1, padding=0)
+        )
+        self.trans_in_conv = nn.Sequential(
+            nn.ReflectionPad2d(1),
+            nn.Conv2d(in_channels, features[0], kernel_size=3, stride=1, padding=0)
+        )
 
         # Clear image branch
         self.clear_encoder1 = EncoderBlockv3(features[0], features[1])
@@ -784,6 +793,13 @@ class LUUIEv6(nn.Module):
         # set the flag of whether to output the backscatter and transmission during testing
         self.output_all_components = False
     
+    def normalize_image(self, x):
+        x_min = x.min(dim=1, keepdim=True)[0].min(dim=2, keepdim=True)[0].min(dim=3, keepdim=True)[0]
+        x_max = x.max(dim=1, keepdim=True)[0].max(dim=2, keepdim=True)[0].max(dim=3, keepdim=True)[0]
+
+        x = (x - x_min) / (x_max - x_min)
+        return x
+    
     def _get_clear_image(self, x):
         # Clear image path
         x = self.clear_in_conv(x)
@@ -793,18 +809,23 @@ class LUUIEv6(nn.Module):
         x = self.clear_decoder1(x, x1)
         x = self.clear_decoder2(x, x0)
         x = self.clear_out(x)
+        # x = torch.clamp(x, 0, 1)
+        x = self.normalize_image(x)
         return x
     
     def _get_backscatter(self, x):
         # Apply Gaussian blur before backscatter path
-        x = self.gaussian_blur(x)
+        x_mean = torch.mean(x, dim=(2, 3), keepdim=True)
+        # x = self.gaussian_blur(x)
         x = self.back_in_conv(x)
         x0, x = self.back_encoder1(x)
         x1, x = self.back_encoder2(x)
         x = self.back_bottleneck(x)
         x = self.back_decoder1(x, x1)
         x = self.back_decoder2(x, x0)
-        x = self.back_out(x)
+        x = self.back_out(x) * x_mean
+        # x = torch.clamp(x, 0, 1)
+        x = self.normalize_image(x)
         return x
     
     def _get_transmission(self, x):
@@ -817,6 +838,8 @@ class LUUIEv6(nn.Module):
         x = self.trans_decoder1(x, x1)
         x = self.trans_decoder2(x, x0)
         x = self.trans_out(x)
+        # x = torch.clamp(x, 0, 1)
+        x = self.normalize_image(x)
         return x
     
     def forward(self, x):
@@ -918,13 +941,14 @@ class LUUIEv7(nn.Module):
         return out + x
 
     def _get_backscatter(self, x):
+        x_mean = torch.mean(x, dim=(2, 3), keepdim=True)
         x = self.back_in_conv(x)
         x0, x = self.back_encoder1(x)
         x1, x = self.back_encoder2(x)
         x = self.back_bottleneck(x)
         x = self.back_decoder1(x, x1)
         x = self.back_decoder2(x, x0)
-        x = self.back_out(x)
+        x = self.back_out(x) * x_mean
         return x
     
     def _get_transmission(self, x):
@@ -1024,6 +1048,121 @@ class LUUIEv8(nn.Module):
             # Process backscatter and transmission branches (without identity connection)
             back = self._process_branch(x, self.back_branch, add_identity=False)
             trans = self._process_branch(x, self.trans_branch, add_identity=False)
+            return clear, back, trans
+        else:
+            return clear
+
+class LUUIEv9(nn.Module):
+    def __init__(self, in_channels=3, out_channels=3, features=[32, 48, 96]):
+        super(LUUIEv9, self).__init__()
+        
+        # Gaussian blur for backscatter and transmission branches
+        self.gaussian_blur = GaussianBlur(kernel_size=7, sigma=1.0)
+        
+        # Initial convolutions for each branch
+        self.clear_in_conv = nn.Sequential(
+            nn.ReflectionPad2d(1),
+            nn.Conv2d(in_channels, features[0], kernel_size=3, stride=1, padding=0)
+        )
+        self.back_in_conv = nn.Sequential(
+            nn.ReflectionPad2d(1),
+            nn.Conv2d(in_channels, features[0], kernel_size=3, stride=1, padding=0)
+        )
+        self.trans_in_conv = nn.Sequential(
+            nn.ReflectionPad2d(1),
+            nn.Conv2d(in_channels, features[0], kernel_size=3, stride=1, padding=0)
+        )
+
+        # Clear image branch
+        self.clear_encoder1 = EncoderBlockv3(features[0], features[1])
+        self.clear_encoder2 = EncoderBlockv3(features[1], features[2])
+        self.clear_bottleneck = Bottleneck(features[2], reduction=32)
+        self.clear_decoder1 = DecoderBlockv3(features[2], features[1])
+        self.clear_decoder2 = DecoderBlockv3(features[1], features[0])
+        self.clear_out = nn.Conv2d(features[0], out_channels, kernel_size=1)
+        
+        # Backscatter branch with low frequency focus
+        self.back_encoder1 = EncoderBlockv3(features[0], features[1])
+        self.back_encoder2 = EncoderBlockv3(features[1], features[2])
+        self.back_bottleneck = Bottleneck(features[2], reduction=32)
+        self.back_decoder1 = DecoderBlockv3(features[2], features[1])
+        self.back_decoder2 = DecoderBlockv3(features[1], features[0])
+        self.back_out = nn.Conv2d(features[0], out_channels, kernel_size=1)
+        
+        # Transmission branch with low frequency focus
+        self.trans_encoder1 = EncoderBlockv3(features[0], features[1])
+        self.trans_encoder2 = EncoderBlockv3(features[1], features[2])
+        self.trans_bottleneck = Bottleneck(features[2], reduction=32)
+        self.trans_decoder1 = DecoderBlockv3(features[2], features[1])
+        self.trans_decoder2 = DecoderBlockv3(features[1], features[0])
+        self.trans_out = nn.Conv2d(features[0], out_channels, kernel_size=1)
+
+        # set the flag of whether to output the backscatter and transmission during testing
+        self.output_all_components = False
+    
+    def normalize_image(self, x):
+        x_min = x.min(dim=1, keepdim=True)[0].min(dim=2, keepdim=True)[0].min(dim=3, keepdim=True)[0]
+        x_max = x.max(dim=1, keepdim=True)[0].max(dim=2, keepdim=True)[0].max(dim=3, keepdim=True)[0]
+
+        x = (x - x_min) / (x_max - x_min)
+        return x
+    
+    def _get_clear_image(self, x):
+        # Clear image path
+        x = self.clear_in_conv(x)
+        x0, x = self.clear_encoder1(x)
+        x1, x = self.clear_encoder2(x)
+        x = self.clear_bottleneck(x)
+        x = self.clear_decoder1(x, x1)
+        x = self.clear_decoder2(x, x0)
+        x = self.clear_out(x)
+        # x = torch.clamp(x, 0, 1)
+        x = self.normalize_image(x)
+        return x
+    
+    def _get_backscatter(self, x):
+        # Apply Gaussian blur before backscatter path
+        x_mean = torch.mean(x, dim=(2, 3), keepdim=True)
+        # x = self.gaussian_blur(x)
+        x = self.back_in_conv(x)
+        x0, x = self.back_encoder1(x)
+        x1, x = self.back_encoder2(x)
+        x = self.back_bottleneck(x)
+        x = self.back_decoder1(x, x1)
+        x = self.back_decoder2(x, x0)
+        x = self.back_out(x) + x_mean
+        # x = torch.clamp(x, 0, 1)
+        x = self.normalize_image(x)
+        return x
+    
+    def _get_transmission(self, x):
+        # Apply Gaussian blur before transmission path
+        # x = self.gaussian_blur(x)
+        x = self.trans_in_conv(x)
+        x0, x = self.trans_encoder1(x)
+        x1, x = self.trans_encoder2(x)
+        x = self.trans_bottleneck(x)
+        x = self.trans_decoder1(x, x1)
+        x = self.trans_decoder2(x, x0)
+        x = self.trans_out(x)
+        # x = torch.clamp(x, 0, 1)
+        x = self.normalize_image(x)
+        return x
+    
+    def forward(self, x):
+        # Get clear image
+        clear = self._get_clear_image(x)
+        
+        # During training, also compute backscatter and transmission
+        if self.training:
+            back = self._get_backscatter(x)
+            trans = self._get_transmission(x)
+            return clear, back, trans
+        
+        # During testing, only return clear image unless output_all_components is True
+        if self.output_all_components:
+            back = self._get_backscatter(x)
+            trans = self._get_transmission(x)
             return clear, back, trans
         else:
             return clear

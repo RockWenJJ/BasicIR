@@ -174,54 +174,66 @@ class UnsImageRestorationModel(BaseModel):
 
         # redgrade the image
         alpha = torch.rand(1).to(self.device)
-        redeg_lq = clear * (trans * alpha + 1 - alpha) + back * alpha
+        alpha = torch.clamp(alpha, 0.2, 0.8)
+        # alpha = 0.5
+        redeg_lq = self.lq * alpha + (1 - alpha) * clear
         new_clear, new_back, new_trans = self.net_g(redeg_lq.detach())
-        # new_back = back
-        # new_trans = trans * alpha
-        # new_clear = clear
 
         self.output = clear
 
         total_loss = 0.
         loss_dict = OrderedDict()
         # Reconstruction loss
-        l_recon0 = torch.mean(torch.abs(clear - self.lq) * (1 - self.in_air_mask))
-        if self.lq.size(0) > self.in_air_count:  # normalize by underwater image count
-            l_recon0 = l_recon0 * self.lq.size(0) / (self.lq.size(0) - self.in_air_count)
-        loss_dict['l_recon0'] = l_recon0
-        total_loss += l_recon0
+        l_recon = F.l1_loss(clear * trans + back, self.lq)
+        loss_dict['l_recon'] = l_recon
+        total_loss += l_recon
 
-        l_recon1 = torch.mean(torch.abs(clear - back * trans - self.lq * (1 - trans)) * (1 - self.in_air_mask))
-        if self.lq.size(0) > self.in_air_count:  # normalize by underwater image count
-            l_recon1 = l_recon1 * self.lq.size(0) / (self.lq.size(0) - self.in_air_count)
-        loss_dict['l_recon1'] = l_recon1
-        total_loss += l_recon1
+        # uw_mask = 1 - self.in_air_mask
+        # uw_count = self.lq.size(0) - self.in_air_count
+        # l_recon = F.l1_loss((clear*trans + back) * uw_mask, self.lq * uw_mask)
+        # if uw_count > 0:  # normalize by underwater image count
+        #     l_recon = l_recon * self.lq.size(0) / uw_count
+        # loss_dict['l_recon_uw'] = l_recon
+        # total_loss += l_recon
 
         # The clear reconstruction loss for in-air images
-        l_recon_clear = F.l1_loss(clear * self.in_air_mask, self.lq * self.in_air_mask)
+        # clear reconstruction loss
+        l_air_clear = F.l1_loss(clear * self.in_air_mask, self.lq * self.in_air_mask)
         if self.in_air_count > 0:
-            l_recon_clear = l_recon_clear * self.lq.size(0) / self.in_air_count  # normalize by actual in-air image count
-        loss_dict['l_recon_clear'] = l_recon_clear  # weight factor can be adjusted
-        total_loss += l_recon_clear
-
-        # Gray world assumption loss for clear image (only for underwater images)
-        clear_means = torch.mean(clear, dim=[2, 3])  # [B, 3]
-        l_gray_world = torch.mean(torch.sum(torch.abs(clear_means - 0.5), dim=1, keepdim=True) * (1 - self.in_air_mask.reshape(-1, 1)))
-        if self.lq.size(0) > self.in_air_count:  # normalize by underwater image count
-            l_gray_world = l_gray_world * self.lq.size(0) / (self.lq.size(0) - self.in_air_count)
-        loss_dict['l_gray_world'] = l_gray_world   # weight factor can be adjusted
-        total_loss += l_gray_world
+            l_air_clear = l_air_clear * self.lq.size(0) / self.in_air_count  # normalize by actual in-air image count
+        loss_dict['l_air_clear'] = l_air_clear  # weight factor can be adjusted
+        total_loss += l_air_clear
+        # trans reconstruction loss
+        l_air_trans = F.l1_loss(trans * self.in_air_mask, torch.ones_like(trans) * self.in_air_mask)
+        if self.in_air_count > 0:
+            l_air_trans = l_air_trans * self.lq.size(0) / self.in_air_count  # normalize by actual in-air image count
+        loss_dict['l_air_trans'] = l_air_trans
+        total_loss += l_air_trans
+        # back reconstruction loss
+        l_air_back = F.l1_loss(back * self.in_air_mask, torch.zeros_like(back) * self.in_air_mask)
+        if self.in_air_count > 0:
+            l_air_back = l_air_back * self.lq.size(0) / self.in_air_count  # normalize by actual in-air image count
+        loss_dict['l_air_back'] = l_air_back
+        total_loss += l_air_back
 
         # alignment loss
-        l_clear_align = F.l1_loss(clear, new_clear)
-        loss_dict['l_clear_align'] = l_clear_align
-        total_loss += l_clear_align
-        l_back_align = F.l1_loss(back * alpha, new_back)
-        loss_dict['l_back_align'] = l_back_align
-        total_loss += l_back_align
-        l_trans_align = F.l1_loss(trans * alpha + 1 - alpha, new_trans)
-        loss_dict['l_trans_align'] = l_trans_align
-        total_loss += l_trans_align
+        uw_mask = 1 - self.in_air_mask
+        uw_count = self.lq.size(0) - self.in_air_count
+        # l_align_clear = F.l1_loss(clear * uw_mask , new_clear * uw_mask)
+        # if uw_count > 0:
+        #     l_align_clear = l_align_clear * self.lq.size(0) / uw_count
+        # loss_dict['l_align_clear'] = l_align_clear
+        # total_loss += l_align_clear
+        l_align_back = F.l1_loss(back * alpha * uw_mask, new_back * uw_mask)
+        if uw_count > 0:
+            l_align_back = l_align_back * self.lq.size(0) / uw_count
+        loss_dict['l_align_back'] = l_align_back
+        total_loss += l_align_back
+        # l_align_trans = F.l1_loss((trans * alpha + 1 - alpha) * uw_mask, new_trans * uw_mask)
+        # if uw_count > 0:    
+        #     l_align_trans = l_align_trans * self.lq.size(0) / uw_count
+        # loss_dict['l_align_trans'] = l_align_trans
+        # total_loss += l_align_trans
 
         # uw_var_loss
         l_uw_var = self.uw_var_loss(trans, back, self.in_air_mask, self.in_air_count)
@@ -232,82 +244,28 @@ class UnsImageRestorationModel(BaseModel):
         l_uw_mean = self.uw_mean_loss(trans, back, self.in_air_mask, self.in_air_count)
         loss_dict['l_uw_mean'] = l_uw_mean
         total_loss += l_uw_mean
+
+        # # Gray-world assumption loss (only for underwater images)
+        # clear_mean = torch.mean(clear, dim=[2, 3])  # [B, C]
+        # gray_world_loss = torch.var(clear_mean, dim=1)  # Variance across channels [B]
         
+        # # Apply mask and normalize
+        # gray_world_loss = torch.sum(gray_world_loss * (1 - self.in_air_mask.reshape(-1))) 
+        # if uw_count > 0:
+        #     gray_world_loss = gray_world_loss / uw_count
+        # else:
+        #     gray_world_loss = 0
 
-        # # penalize the transmission if its variance is too low (only for underwater images)
-        # trans_mean = torch.mean(trans, dim=[2, 3], keepdim=True)  # [B,C,1,1]
-        # trans_var = torch.mean((trans - trans_mean) ** 2, dim=[2, 3])  # [B,C]
-        # trans_var = torch.mean(trans_var * (1 - self.in_air_mask.reshape(-1, 1))) # only consider underwater images
-        # l_trans_var = torch.exp(-trans_var * 10.0)  # exponential penalty for low variance
-        # if self.lq.size(0) > self.in_air_count:  # normalize by underwater image count
-        #     l_trans_var = l_trans_var * self.lq.size(0) / (self.lq.size(0) - self.in_air_count)
-        # loss_dict['l_trans_var'] = l_trans_var
-        # total_loss += l_trans_var
+        
+        # # Weight the loss
+        # gray_world_loss =  gray_world_loss + F.l1_loss(clear_mean, torch.ones_like(clear_mean)* 0.5)
+        # loss_dict['l_gray'] = gray_world_loss
+        # total_loss += gray_world_loss
 
-        # # penalize the transmission if its mean is too high (only for underwater images)
-        # trans_mean = torch.mean(trans, dim=[2, 3])  # [B, 1]
-        # l_trans_mean = torch.mean(torch.sum(torch.relu(trans_mean - 0.7), dim=1, keepdim=True) * (1 - self.in_air_mask.reshape(-1, 1)))
-        # if self.lq.size(0) > self.in_air_count:  # normalize by underwater image count
-        #     l_trans_mean = l_trans_mean * self.lq.size(0) / (self.lq.size(0) - self.in_air_count)
-        # loss_dict['l_trans_mean'] = l_trans_mean
-        # total_loss += l_trans_mean
-
-        # # penalize the backscatter if its variance is too low (only for underwater images)
-        # back_mean = torch.mean(back, dim=[2, 3], keepdim=True)  # [B,C,1,1]
-        # back_var = torch.mean((back - back_mean) ** 2, dim=[2, 3])  # [B,C]
-        # back_var = torch.mean(back_var * (1 - self.in_air_mask.reshape(-1, 1)))  # only consider underwater images
-        # l_back_var = torch.exp(-back_var * 10.0)  # exponential penalty for low variance
-        # if self.lq.size(0) > self.in_air_count:  # normalize by underwater image count
-        #     l_back_var = l_back_var * self.lq.size(0) / (self.lq.size(0) - self.in_air_count)
-        # loss_dict['l_back_var'] = l_back_var
-        # total_loss += l_back_var
-
-        # # penalize the backscatter if its mean deviates from input image mean (only for underwater images)
-        # back_mean = torch.mean(back, dim=[2, 3])  # [B, c]
-        # input_mean = torch.mean(self.lq, dim=[2, 3])  # [B, c]
-        # l_back_mean = torch.mean(torch.sum(torch.abs(back_mean - input_mean), dim=1, keepdim=True) * (1 - self.in_air_mask.reshape(-1, 1)))
-        # if self.lq.size(0) > self.in_air_count:  # normalize by underwater image count
-        #     l_back_mean = l_back_mean * self.lq.size(0) / (self.lq.size(0) - self.in_air_count)
-        # loss_dict['l_back_mean'] = l_back_mean
-        # total_loss += l_back_mean
-
-        # # align backscatter with complementary transmission scaled by input mean (only for underwater images)
-        # input_mean = torch.mean(self.lq, dim=[2, 3], keepdim=True)  # [B, C, 1, 1]
-        # target_back = (1 - trans) * input_mean  # [B, C, H, W]
-        # l_trans_back_align = torch.mean(torch.abs(back - target_back) * (1 - self.in_air_mask))
-        # if self.lq.size(0) > self.in_air_count:  # normalize by underwater image count
-        #     l_trans_back_align = l_trans_back_align * self.lq.size(0) / (self.lq.size(0) - self.in_air_count)
-        # loss_dict['l_trans_back_align'] = l_trans_back_align
-        # total_loss += l_trans_back_align
-
-        # 
-
-        # # transmision loss
-        # l_trans_loss_air = ((trans - 1.0)**2) * self.in_air_mask
-        # l_trans_loss_air = torch.mean(l_trans_loss_air.reshape(l_trans_loss_air.size(0), -1), dim=1)
-        # l_trans_loss_air = torch.sum(l_trans_loss_air) / self.in_air_count
-        # loss_dict['l_trans_loss_air'] = l_trans_loss_air
-        # total_loss += l_trans_loss_air
-        # # # penalize the transmision when the underwater images' transmission is 1
-        # # l_trans_loss_uw = ((trans)**2) * (1 - self.in_air_mask)
-        # # l_trans_loss_uw = torch.mean(l_trans_loss_uw.reshape(l_trans_loss_uw.size(0), -1), dim=1)
-        # # l_trans_loss_uw = torch.sum(l_trans_loss_uw) / (self.lq.size(0) - self.in_air_count) * 0.01
-        # # loss_dict['l_trans_loss_uw'] = l_trans_loss_uw
-        # # total_loss += l_trans_loss_uw
-
-        # # backscattering loss
-        # l_back_loss_air = (back**2) * self.in_air_mask
-        # l_back_loss_air = torch.mean(l_back_loss_air.reshape(l_back_loss_air.size(0), -1), dim=1)
-        # l_back_loss_air = torch.sum(l_back_loss_air) / self.in_air_count
-        # loss_dict['l_back_loss_air'] = l_back_loss_air
-        # total_loss += l_back_loss_air
-
-        # # # penalize the backscattering when the underwater images' backscattering is 0
-        # # l_back_loss_uw = ((back-1)**2) * (1 - self.in_air_mask)
-        # # l_back_loss_uw = torch.mean(l_back_loss_uw.reshape(l_back_loss_uw.size(0), -1), dim=1)
-        # # l_back_loss_uw = torch.sum(l_back_loss_uw) / (self.lq.size(0) - self.in_air_count) * 0.01
-        # # loss_dict['l_back_loss_uw'] = l_back_loss_uw
-        # # total_loss += l_back_loss_uw
+        # # gradient sharpness ranking loss
+        # l_grad = self.gradient_sharpness_ranking_loss(clear, self.lq.detach())
+        # loss_dict['l_grad'] = l_grad
+        # total_loss += l_grad
 
         loss_dict['total_loss'] = total_loss
 
@@ -342,11 +300,13 @@ class UnsImageRestorationModel(BaseModel):
 
         # 计算 underwater 图像的像素级均值和方差
         def compute_variance(x, mask, count):
-            # 按 mask 计算均值（保留通道维度）
-            mean_x = (x * mask).sum(dim=(0, 2, 3), keepdim=True) / (count + 1e-6)
-            # 计算方差
-            var_x = ((x - mean_x) ** 2 * mask).sum(dim=(0, 2, 3)) / (count + 1e-6)
-            return var_x.mean()  # 返回标量
+            mean_x = x.mean(dim=(2, 3), keepdim=True)
+            var_x = ((x - mean_x) ** 2)
+            var_x_mean = var_x.mean(dim=(2, 3), keepdim=True)
+            var_x_mean = var_x_mean.mean(dim=1, keepdim=True)
+            var = (var_x_mean * mask).sum() / (count + 1e-6)
+            return var
+            
 
         var_trans_uw = compute_variance(trans, uw_mask, uw_count)
         var_back_uw = compute_variance(back, uw_mask, uw_count)
@@ -370,20 +330,22 @@ class UnsImageRestorationModel(BaseModel):
         uw_count = trans.shape[0] - in_air_count
 
         def compute_mean(x, mask, count):
-            # 确保返回的是每个通道的均值
-            return (x * mask).sum(dim=(0, 2, 3)) / (count + 1e-6)  # [C]
+            mean_x = x.mean(dim=(2, 3), keepdim=True)
+            mean_x_mean = mean_x.mean(dim=1, keepdim=True)
+            mean = (mean_x_mean * mask).sum() / (count + 1e-6)
+            return mean
 
         # 对于传输图，我们期望 in-air 的均值大于 underwater 的均值
-        trans_air_mean = compute_mean(trans, in_air_mask, in_air_count)  # [1] or [C]
-        trans_uw_mean  = compute_mean(trans, uw_mask, uw_count)          # [1] or [C]
+        trans_air_mean = compute_mean(trans, in_air_mask, in_air_count)
+        trans_uw_mean  = compute_mean(trans, uw_mask, uw_count)
         
         # 对于散射图，我们期望 underwater 的均值大于 in-air 的均值
-        back_air_mean = compute_mean(back, in_air_mask, in_air_count)    # [C]
-        back_uw_mean  = compute_mean(back, uw_mask, uw_count)           # [C]
+        back_air_mean = compute_mean(back, in_air_mask, in_air_count)
+        back_uw_mean  = compute_mean(back, uw_mask, uw_count)
 
-        # 计算均值差异（注意差值可能为负，因此取 ReLU 保证非负）
-        diff_trans = F.relu(trans_air_mean - trans_uw_mean)  # 希望尽可能大
-        diff_back  = F.relu(back_uw_mean - back_air_mean)   # 希望尽可能大
+        # 计算均值差异
+        diff_trans = torch.abs(trans_air_mean - trans_uw_mean)  # 希望尽可能大
+        diff_back  = torch.abs(back_uw_mean - back_air_mean)   # 希望尽可能大
 
         # 定义连续型均值损失，差值越小，损失越大；差值越大，损失越小（但不完全为0）
         l_mean_trans = target_margin / (diff_trans.mean() + target_margin + 1e-6)
@@ -391,6 +353,58 @@ class UnsImageRestorationModel(BaseModel):
 
         # 返回标量损失
         return lambda_mean * (l_mean_trans + l_mean_back)
+
+    def compute_gradient_magnitude(self, img):
+        """
+        计算图像的梯度幅值，使用 Sobel 卷积核
+        参数:
+            img: 输入图像张量，形状 (N, C, H, W)
+        返回:
+            与输入尺寸相同的梯度幅值张量
+        """
+        # 定义 Sobel 核（x 方向和 y 方向）
+        sobel_kernel_x = torch.tensor([[-1., 0., 1.],
+                                    [-2., 0., 2.],
+                                    [-1., 0., 1.]], device=img.device).view(1, 1, 3, 3).requires_grad_(False)
+        sobel_kernel_y = torch.tensor([[-1., -2., -1.],
+                                    [ 0.,  0.,  0.],
+                                    [ 1.,  2.,  1.]], device=img.device).view(1, 1, 3, 3).requires_grad_(False) 
+        
+        channels = img.shape[1]
+        # 对于多通道图像，每个通道独立进行卷积
+        sobel_kernel_x = sobel_kernel_x.repeat(channels, 1, 1, 1)
+        sobel_kernel_y = sobel_kernel_y.repeat(channels, 1, 1, 1)
+        
+        grad_x = F.conv2d(img, sobel_kernel_x, padding=1, groups=channels)
+        grad_y = F.conv2d(img, sobel_kernel_y, padding=1, groups=channels)
+        
+        # 计算梯度幅值，1e-6 用于避免数值不稳定
+        grad_magnitude = torch.sqrt(grad_x ** 2 + grad_y ** 2 + 1e-6)
+        return grad_magnitude
+
+    def gradient_sharpness_ranking_loss(self, img1, img2, margin=0.0):
+        """
+        排名损失：要求 img1 的平均梯度大于 img2 的平均梯度至少 margin 的值。
+        如果不满足，则产生正的损失。
+        
+        参数:
+            img1: 预期较清晰的图像，张量形状 (N, C, H, W)
+            img2: 预期较模糊的图像，张量形状 (N, C, H, W)
+            margin: 要求的最小梯度差距（默认为 0.0）
+        
+        返回:
+            一个标量损失，若 img1 梯度不足，则损失 > 0，否则为 0
+        """
+        grad1 = self.compute_gradient_magnitude(img1)
+        grad2 = self.compute_gradient_magnitude(img2)
+        
+        # 计算每张图的平均梯度幅值
+        mean_grad1 = torch.mean(grad1)
+        mean_grad2 = torch.mean(grad2)
+        
+        # 如果 mean_grad1 > mean_grad2 + margin，则无损失，否则损失为 (margin + mean_grad2 - mean_grad1)
+        loss = torch.relu(margin + mean_grad2 - mean_grad1)
+        return loss
 
 
     def pad_test(self, window_size):        
