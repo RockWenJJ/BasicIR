@@ -9,12 +9,13 @@ from .restormer_arch import Restormer
 from .unet_arch import UNet
 from .yolov8unet_arch import YOLOv8UNet
 from .liteenhancenet_arch import LiteEnhanceNet
-from .lu2net_arch import LU2Net, LU2Net_Bottleneck
+from .lu2net_arch import LU2Net
 from .luuie_arch import LUUIEv1, LUUIEv2, LUUIEv3, LUUIEv4, LUUIEv5, LUUIEv6, LUUIEv7, LUUIEv8
 from .shallowuwnet_arch import ShallowUWNet
 from .ssduie_arch import SSDUIE, SSDNoWave, SSDNoHist
 from .waveresneth_arch import WaveResNetH
 from .lu2nethybrid_arch import LU2NetHybrid
+from .lusanet_arch import LUSANet
 
 
 # automatically scan and import arch modules
@@ -76,8 +77,8 @@ __all__ = [
     'YOLOv8UNet',
     'LiteEnhanceNet',
     'LU2Net',
-    'LU2Net_Bottleneck',
     'WaveResNetH',
     'LU2NetHybrid',
+    'LUSANet',
     # ... other architectures ...
 ]

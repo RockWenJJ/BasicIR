@@ -6,11 +6,6 @@ from torchvision import transforms
 from copy import deepcopy
 from torch import Tensor
 from typing import Dict, List, Tuple, Union, Optional
-from mmdet.structures import OptSampleList, SampleList
-from mmengine.dist import get_world_size
-
-
-from mmengine.optim import OptimWrapper
 
 import torch.nn.functional as F
 import numbers
