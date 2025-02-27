@@ -55,69 +55,22 @@ class CrissCrossAttention(nn.Module):
         
         return out
 
-class AreaSelfAttention(nn.Module):
-    """区域自注意力机制"""
-    def __init__(self, in_channels, reduction=8, area_size=8):
-        super().__init__()
-        self.area_size = area_size
-        self.query = nn.Conv2d(in_channels, in_channels//reduction, kernel_size=1)
-        self.key = nn.Conv2d(in_channels, in_channels//reduction, kernel_size=1)
-        self.value = nn.Conv2d(in_channels, in_channels, kernel_size=1)
-        self.gamma = nn.Parameter(torch.zeros(1))
-        
-    def forward(self, x):
-        b, c, h, w = x.size()
-        
-        # 划分区域
-        padded_h = ((h - 1) // self.area_size + 1) * self.area_size
-        padded_w = ((w - 1) // self.area_size + 1) * self.area_size
-        padded_x = F.pad(x, (0, padded_w - w, 0, padded_h - h))
-        
-        # 生成查询、键和值
-        q = self.query(padded_x)
-        k = self.key(padded_x)
-        v = self.value(padded_x)
-        
-        # 重塑为区域
-        q = q.view(b, -1, padded_h//self.area_size, self.area_size, padded_w//self.area_size, self.area_size)
-        k = k.view(b, -1, padded_h//self.area_size, self.area_size, padded_w//self.area_size, self.area_size)
-        v = v.view(b, -1, padded_h//self.area_size, self.area_size, padded_w//self.area_size, self.area_size)
-        
-        # 区域内自注意力
-        q = q.permute(0, 2, 4, 1, 3, 5).contiguous().view(b*(padded_h//self.area_size)*(padded_w//self.area_size), -1, self.area_size*self.area_size)
-        k = k.permute(0, 2, 4, 1, 3, 5).contiguous().view(b*(padded_h//self.area_size)*(padded_w//self.area_size), -1, self.area_size*self.area_size)
-        v = v.permute(0, 2, 4, 1, 3, 5).contiguous().view(b*(padded_h//self.area_size)*(padded_w//self.area_size), -1, self.area_size*self.area_size)
-        
-        # 计算注意力
-        attn = torch.bmm(q.transpose(1, 2), k)
-        attn = F.softmax(attn, dim=2)
-        
-        # 应用注意力
-        out = torch.bmm(v, attn.transpose(1, 2))
-        out = out.view(b, padded_h//self.area_size, padded_w//self.area_size, -1, self.area_size, self.area_size)
-        out = out.permute(0, 3, 1, 4, 2, 5).contiguous().view(b, -1, padded_h, padded_w)
-        
-        # 裁剪回原始大小
-        out = out[:, :, :h, :w]
-        
-        return self.gamma * out + x
-
 class LUSANet(nn.Module):
-    def __init__(self, in_channels=3, out_channels=3, features=[16, 64, 96]):
+    def __init__(self, in_channels=3, out_channels=3, features=[24, 48, 96]):
         super().__init__()
-        # 初始卷积层（与LU2Net保持一致）
+        # 初始卷积层
         self.in_conv = nn.Conv2d(in_channels, features[0], 3, padding=1)
         
-        # 编码器（结合LU2Net和LU2NetHybrid的优点）
-        self.encoder1 = EnhancedEncoderBlock(features[0], features[1])
-        self.encoder2 = EnhancedEncoderBlock(features[1], features[2])
+        # 编码器（浅层与深层）
+        self.encoder1 = ShallowEncoderBlock(features[0], features[1])  # 浅层
+        self.encoder2 = DeepEncoderBlock(features[1], features[2])     # 深层
         
-        # 瓶颈层（添加区域自注意力）
-        self.bottleneck = EnhancedBottleneck(features[2])
+        # 瓶颈层（基于LU2Net改进，不使用自注意力）
+        self.bottleneck = ImprovedBottleneck(features[2])
         
-        # 解码器（增强版）
-        self.decoder1 = EnhancedDecoderBlock(features[2], features[1])
-        self.decoder2 = EnhancedDecoderBlock(features[1], features[0])
+        # 解码器（与编码器对称）
+        self.decoder1 = DeepDecoderBlock(features[2], features[1])     # 深层
+        self.decoder2 = ShallowDecoderBlock(features[1], features[0])  # 浅层
         
         # 输出层
         self.out_conv = nn.Conv2d(features[0], out_channels, 1)
@@ -138,16 +91,17 @@ class LUSANet(nn.Module):
         
         return self.out_conv(x)
 
-class EnhancedEncoderBlock(nn.Module):
+# 浅层编码器块 (axial_conv + norm + ca)
+class ShallowEncoderBlock(nn.Module):
     def __init__(self, in_c, out_c):
         super().__init__()
-        # 轴向卷积（从LU2Net）
+        # 轴向卷积
         self.axial_conv = AxialDepthwiseConv(in_c, out_c)
         
-        # 混合归一化（从LU2NetHybrid）
+        # 混合归一化
         self.norm = HybridNormalization(out_c)
         
-        # 通道注意力（从LU2Net）
+        # 通道注意力
         self.ca = CALayer(out_c)
         
         # 下采样
@@ -159,36 +113,30 @@ class EnhancedEncoderBlock(nn.Module):
         x = self.ca(x)
         return x, self.down(x)
 
-class EnhancedBottleneck(nn.Module):
-    def __init__(self, channels):
+# 深层编码器块 (axial_conv + CrissCrossAttention)
+class DeepEncoderBlock(nn.Module):
+    def __init__(self, in_c, out_c):
         super().__init__()
-        # 结合LU2Net的Bottleneck和LU2NetHybrid的LightDenseBottleneck
-        self.conv1 = nn.Conv2d(channels, channels, 1)
-        self.axial1 = AxialDepthwiseConv(channels, channels)
-        self.axial2 = AxialDepthwiseConv(channels, channels)
+        # 轴向卷积
+        self.axial_conv = AxialDepthwiseConv(in_c, out_c)
         
-        # 添加区域自注意力
-        self.attention = AreaSelfAttention(channels)
+        # 混合归一化
+        self.norm = HybridNormalization(out_c)
         
-        # 通道注意力
-        self.ca = CALayer(channels)
+        # 交叉注意力
+        self.cc_attn = CrissCrossAttention(out_c)
         
-        # 最终卷积
-        self.conv2 = nn.Conv2d(channels, channels, 1)
-        self.relu = nn.ReLU(inplace=False)
+        # 下采样
+        self.down = nn.MaxPool2d(kernel_size=2, stride=2)
 
     def forward(self, x):
-        identity = x
-        x = self.conv1(x)
-        x1 = self.axial1(x)
-        x2 = self.axial2(x)
-        x = x + x1 + x2
-        x = self.attention(x)  # 区域自注意力
-        x = self.ca(x)
-        x = self.conv2(self.relu(x))
-        return x + identity  # 残差连接
+        x = self.axial_conv(x)
+        x = self.norm(x)
+        x = self.cc_attn(x)
+        return x, self.down(x)
 
-class EnhancedDecoderBlock(nn.Module):
+# 深层解码器块 (upsample + axial_conv + CrissCrossAttention) - 与深层编码器对称
+class DeepDecoderBlock(nn.Module):
     def __init__(self, in_c, out_c):
         super().__init__()
         # 上采样
@@ -200,8 +148,37 @@ class EnhancedDecoderBlock(nn.Module):
         # 轴向卷积
         self.axial = AxialDepthwiseConv(in_c, out_c)
         
-        # 交叉注意力（轻量级）
+        # 交叉注意力
         self.cc_attn = CrissCrossAttention(out_c)
+        
+        # 最终卷积
+        self.conv2 = nn.Conv2d(out_c, out_c, 1)
+        self.relu = nn.ReLU(inplace=False)
+
+    def forward(self, skip, x):
+        x = self.up(x)
+        x = torch.cat([skip, x], dim=1)
+        x = self.conv1(x)
+        x = self.axial(x)
+        x = self.cc_attn(x)
+        x = self.conv2(self.relu(x))
+        return self.relu(x)
+
+# 浅层解码器块 (upsample + axial_conv + CA) - 与浅层编码器对称
+class ShallowDecoderBlock(nn.Module):
+    def __init__(self, in_c, out_c):
+        super().__init__()
+        # 上采样
+        self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        
+        # 特征融合
+        self.conv1 = nn.Conv2d(in_c * 2, in_c, 1)
+        
+        # 轴向卷积
+        self.axial = AxialDepthwiseConv(in_c, out_c)
+        
+        # 混合归一化
+        self.norm = HybridNormalization(out_c)
         
         # 通道注意力
         self.ca = CALayer(out_c)
@@ -215,10 +192,43 @@ class EnhancedDecoderBlock(nn.Module):
         x = torch.cat([skip, x], dim=1)
         x = self.conv1(x)
         x = self.axial(x)
-        x = self.cc_attn(x)  # 交叉注意力
+        x = self.norm(x)
         x = self.ca(x)
         x = self.conv2(self.relu(x))
         return self.relu(x)
+
+# 改进的瓶颈层 - 基于LU2Net而不使用自注意力
+class ImprovedBottleneck(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        # 多分支结构
+        self.branch1 = AxialDepthwiseConv(channels, channels, kernel_length=3)
+        self.branch2 = AxialDepthwiseConv(channels, channels, kernel_length=5)
+        self.branch3 = AxialDepthwiseConv(channels, channels, kernel_length=7)
+        
+        # 特征融合
+        self.fusion = nn.Sequential(
+            nn.Conv2d(channels*3, channels, 1),
+            nn.BatchNorm2d(channels),
+            nn.ReLU(inplace=False)
+        )
+        
+        # 通道注意力
+        self.ca = CALayer(channels)
+        
+        # 最终卷积
+        self.conv = nn.Conv2d(channels, channels, 1)
+        self.relu = nn.ReLU(inplace=False)
+
+    def forward(self, x):
+        identity = x
+        b1 = self.branch1(x)
+        b2 = self.branch2(x)
+        b3 = self.branch3(x)
+        x = self.fusion(torch.cat([b1, b2, b3], dim=1))
+        x = self.ca(x)
+        x = self.conv(self.relu(x))
+        return x + identity
 
 # 保留原有的辅助模块
 class AxialDepthwiseConv(nn.Module):
