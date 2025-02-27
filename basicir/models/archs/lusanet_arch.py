@@ -62,7 +62,7 @@ class LUSANet(nn.Module):
         self.in_conv = nn.Conv2d(in_channels, features[0], 3, padding=1)
         
         # 编码器（浅层与深层）
-        self.encoder1 = ShallowEncoderBlock(features[0], features[1])  # 浅层
+        self.encoder1 = DeepEncoderBlock(features[0], features[1])  # 浅层
         self.encoder2 = DeepEncoderBlock(features[1], features[2])     # 深层
         
         # 瓶颈层（基于LU2Net改进，不使用自注意力）
@@ -70,7 +70,7 @@ class LUSANet(nn.Module):
         
         # 解码器（与编码器对称）
         self.decoder1 = DeepDecoderBlock(features[2], features[1])     # 深层
-        self.decoder2 = ShallowDecoderBlock(features[1], features[0])  # 浅层
+        self.decoder2 = DeepDecoderBlock(features[1], features[0])  # 浅层
         
         # 输出层
         self.out_conv = nn.Conv2d(features[0], out_channels, 1)
