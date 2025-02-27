@@ -12,6 +12,10 @@ from .liteenhancenet_arch import LiteEnhanceNet
 from .lu2net_arch import LU2Net, LU2Net_Bottleneck
 from .luuie_arch import LUUIEv1, LUUIEv2, LUUIEv3, LUUIEv4, LUUIEv5, LUUIEv6, LUUIEv7, LUUIEv8
 from .shallowuwnet_arch import ShallowUWNet
+from .ssduie_arch import SSDUIE, SSDNoWave, SSDNoHist
+from .waveresneth_arch import WaveResNetH
+from .lu2nethybrid_arch import LU2NetHybrid
+
 
 # automatically scan and import arch modules
 # scan all the files under the 'archs' folder and collect files ending with
@@ -73,5 +77,7 @@ __all__ = [
     'LiteEnhanceNet',
     'LU2Net',
     'LU2Net_Bottleneck',
+    'WaveResNetH',
+    'LU2NetHybrid',
     # ... other architectures ...
 ]

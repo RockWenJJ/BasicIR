@@ -766,6 +766,30 @@ class LUUIEv6(nn.Module):
             nn.Conv2d(in_channels, features[0], kernel_size=3, stride=1, padding=0)
         )
 
+        # WB branch
+        self.wb_in_conv = nn.Sequential(
+            nn.ReflectionPad2d(1),
+            nn.Conv2d(in_channels, features[0], kernel_size=3, stride=1, padding=0)
+        )
+        self.wb_encoder1 = EncoderBlockv3(features[0], features[1])
+        self.wb_encoder2 = EncoderBlockv3(features[1], features[2])
+        self.wb_bottleneck = Bottleneck(features[2], reduction=32)
+        # self.wb_encoder3 = nn.Sequential(
+        #     nn.Conv2d(features[2], features[2], kernel_size=3, stride=1, padding=1),
+        #     nn.BatchNorm2d(features[2]),
+        #     nn.ReLU(inplace=True),
+        #     nn.Conv2d(features[2], features[1], kernel_size=3, stride=1, padding=1),
+        #     nn.BatchNorm2d(features[1]),
+        #     nn.ReLU(inplace=True),
+        # )
+        self.wb_out = nn.Sequential(
+            nn.Conv2d(features[2], features[1], kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(features[1]),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(features[1], 3, kernel_size=3, stride=1, padding=1),
+            nn.AdaptiveAvgPool2d(1),
+        )
+
         # Clear image branch
         self.clear_encoder1 = EncoderBlockv3(features[0], features[1])
         self.clear_encoder2 = EncoderBlockv3(features[1], features[2])
@@ -798,6 +822,18 @@ class LUUIEv6(nn.Module):
         x_max = x.max(dim=1, keepdim=True)[0].max(dim=2, keepdim=True)[0].max(dim=3, keepdim=True)[0]
 
         x = (x - x_min) / (x_max - x_min)
+        return x
+
+    
+    def _get_wb(self, x):
+        x = self.wb_in_conv(x)
+        _, x = self.wb_encoder1(x)
+        _, x = self.wb_encoder2(x)
+        x = self.wb_bottleneck(x)
+        # x = self.wb_encoder3(x)
+        x = self.wb_out(x)
+        # x = self.normalize_image(x)
+        x = torch.clamp(x, 0, 1)
         return x
     
     def _get_clear_image(self, x):
@@ -850,13 +886,15 @@ class LUUIEv6(nn.Module):
         if self.training:
             back = self._get_backscatter(x)
             trans = self._get_transmission(x)
-            return clear, back, trans
+            wb = self._get_wb(x)
+            return clear, back, trans, wb
         
         # During testing, only return clear image unless output_all_components is True
         if self.output_all_components:
             back = self._get_backscatter(x)
             trans = self._get_transmission(x)
-            return clear, back, trans
+            wb = self._get_wb(x)
+            return clear, back, trans, wb
         else:
             return clear
 

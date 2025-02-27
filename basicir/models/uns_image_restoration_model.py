@@ -170,35 +170,27 @@ class UnsImageRestorationModel(BaseModel):
 
     def optimize_parameters(self, current_iter):
         self.optimizer_g.zero_grad()
-        clear, back, trans = self.net_g(self.lq)
+        clear, back, trans, wb = self.net_g(self.lq)
 
         # redgrade the image
         alpha = torch.rand(1).to(self.device)
         alpha = torch.clamp(alpha, 0.2, 0.8)
         # alpha = 0.5
-        redeg_lq = self.lq * alpha + (1 - alpha) * clear
-        new_clear, new_back, new_trans = self.net_g(redeg_lq.detach())
+        redeg_lq = self.lq * alpha + (1 - alpha) * clear * wb
+        new_clear, new_back, new_trans, new_wb = self.net_g(redeg_lq.detach())
 
         self.output = clear
 
         total_loss = 0.
         loss_dict = OrderedDict()
         # Reconstruction loss
-        l_recon = F.l1_loss(clear * trans + back, self.lq)
+        l_recon = F.l1_loss(clear * trans * wb + back * (1 - trans), self.lq)
         loss_dict['l_recon'] = l_recon
         total_loss += l_recon
 
-        # uw_mask = 1 - self.in_air_mask
-        # uw_count = self.lq.size(0) - self.in_air_count
-        # l_recon = F.l1_loss((clear*trans + back) * uw_mask, self.lq * uw_mask)
-        # if uw_count > 0:  # normalize by underwater image count
-        #     l_recon = l_recon * self.lq.size(0) / uw_count
-        # loss_dict['l_recon_uw'] = l_recon
-        # total_loss += l_recon
-
         # The clear reconstruction loss for in-air images
         # clear reconstruction loss
-        l_air_clear = F.l1_loss(clear * self.in_air_mask, self.lq * self.in_air_mask)
+        l_air_clear = F.l1_loss(clear * wb * self.in_air_mask, self.lq * self.in_air_mask)
         if self.in_air_count > 0:
             l_air_clear = l_air_clear * self.lq.size(0) / self.in_air_count  # normalize by actual in-air image count
         loss_dict['l_air_clear'] = l_air_clear  # weight factor can be adjusted
@@ -209,12 +201,12 @@ class UnsImageRestorationModel(BaseModel):
             l_air_trans = l_air_trans * self.lq.size(0) / self.in_air_count  # normalize by actual in-air image count
         loss_dict['l_air_trans'] = l_air_trans
         total_loss += l_air_trans
-        # back reconstruction loss
-        l_air_back = F.l1_loss(back * self.in_air_mask, torch.zeros_like(back) * self.in_air_mask)
-        if self.in_air_count > 0:
-            l_air_back = l_air_back * self.lq.size(0) / self.in_air_count  # normalize by actual in-air image count
-        loss_dict['l_air_back'] = l_air_back
-        total_loss += l_air_back
+        # # back reconstruction loss
+        # l_air_back = F.l1_loss(back * self.in_air_mask, torch.zeros_like(back) * self.in_air_mask)
+        # if self.in_air_count > 0:
+        #     l_air_back = l_air_back * self.lq.size(0) / self.in_air_count  # normalize by actual in-air image count
+        # loss_dict['l_air_back'] = l_air_back
+        # total_loss += l_air_back
 
         # alignment loss
         uw_mask = 1 - self.in_air_mask
@@ -224,16 +216,16 @@ class UnsImageRestorationModel(BaseModel):
         #     l_align_clear = l_align_clear * self.lq.size(0) / uw_count
         # loss_dict['l_align_clear'] = l_align_clear
         # total_loss += l_align_clear
-        l_align_back = F.l1_loss(back * alpha * uw_mask, new_back * uw_mask)
+        l_align_back = F.l1_loss(back * uw_mask, new_back * uw_mask)
         if uw_count > 0:
             l_align_back = l_align_back * self.lq.size(0) / uw_count
         loss_dict['l_align_back'] = l_align_back
         total_loss += l_align_back
-        # l_align_trans = F.l1_loss((trans * alpha + 1 - alpha) * uw_mask, new_trans * uw_mask)
-        # if uw_count > 0:    
-        #     l_align_trans = l_align_trans * self.lq.size(0) / uw_count
-        # loss_dict['l_align_trans'] = l_align_trans
-        # total_loss += l_align_trans
+        l_align_trans = F.l1_loss((trans * alpha + 1 - alpha) * uw_mask, new_trans * uw_mask)
+        if uw_count > 0:    
+            l_align_trans = l_align_trans * self.lq.size(0) / uw_count
+        loss_dict['l_align_trans'] = l_align_trans
+        total_loss += l_align_trans
 
         # uw_var_loss
         l_uw_var = self.uw_var_loss(trans, back, self.in_air_mask, self.in_air_count)
@@ -279,7 +271,7 @@ class UnsImageRestorationModel(BaseModel):
         if self.ema_decay > 0:
             self.model_ema(decay=self.ema_decay)
 
-    def uw_var_loss(self, trans, back, in_air_mask, in_air_count, lambda_var=0.1, min_variance=0.01):
+    def uw_var_loss(self, trans, back, in_air_mask, in_air_count, lambda_var=0.1, min_variance=0.1):
         """
         连续型的水下图像方差损失，鼓励水下图像的 T 和 B 的方差保持较大。
         
@@ -317,6 +309,7 @@ class UnsImageRestorationModel(BaseModel):
 
         # 总的水下方差损失
         uw_loss = lambda_var * (l_var_trans + l_var_back)
+        # uw_loss = lambda_var * l_var_trans
         return uw_loss
     
 

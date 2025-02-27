@@ -98,7 +98,7 @@ if __name__ == "__main__":
             try:
                 if args.tile is None:
                     ## Testing on the original resolution image
-                    restored, backscatter, transmission = model(input_)
+                    restored, backscatter, transmission, wb = model(input_)
                 else:
                     #TODO: modify the codes to make it output all components
                     # test the image tile by tile
@@ -123,9 +123,10 @@ if __name__ == "__main__":
                             W[..., h_idx:(h_idx+tile), w_idx:(w_idx+tile)].add_(out_patch_mask)
                     restored = E.div_(W)
 
-                reconstructed = restored * transmission + backscatter
+                backscatter = backscatter * (1 - transmission)
+                reconstructed = restored * transmission * wb + backscatter
 
-                restored = normalize_image(restored)
+                restored = normalize_image(restored) * wb
                 transmission = normalize_image(transmission)
                 backscatter = normalize_image(backscatter)
                 reconstructed = normalize_image(reconstructed)
