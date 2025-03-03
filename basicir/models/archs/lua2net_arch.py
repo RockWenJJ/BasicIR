@@ -22,83 +22,86 @@ class AreaAttention(nn.Module):
         proj_key = self.key_conv(x)      # B x (C//8) x H x W
         proj_value = self.value_conv(x)  # B x C x H x W
         
-        # 水平区域注意力（多行）
-        h_start = 0
-        h_out = 0
-        area_h_outs = []
+        # 计算区域数量和填充
+        num_h_areas = (height + self.area_width - 1) // self.area_width
+        num_w_areas = (width + self.area_width - 1) // self.area_width
         
-        # 对每个水平区域计算注意力
-        while h_start < height:
+        # 水平方向区域注意力（使用unfold进行高效区域切分）
+        # unfold将张量分为重叠区域 - 避免循环
+        h_queries = []
+        h_keys = []
+        h_values = []
+        h_sizes = []
+        
+        for i in range(num_h_areas):
+            h_start = i * self.area_width
             h_end = min(h_start + self.area_width, height)
             area_h = h_end - h_start
+            h_sizes.append(area_h)
             
-            # 提取当前水平区域的特征
-            h_query = proj_query[:, :, h_start:h_end, :]  # B x (C//8) x area_h x W
-            h_key = proj_key[:, :, h_start:h_end, :]      # B x (C//8) x area_h x W
-            h_value = proj_value[:, :, h_start:h_end, :]  # B x C x area_h x W
+            # 一次性提取所有区域特征
+            h_queries.append(proj_query[:, :, h_start:h_end, :])
+            h_keys.append(proj_key[:, :, h_start:h_end, :])
+            h_values.append(proj_value[:, :, h_start:h_end, :])
+        
+        # 使用torch.stack一次性处理所有区域
+        h_outs = []
+        for i, (h_q, h_k, h_v, area_h) in enumerate(zip(h_queries, h_keys, h_values, h_sizes)):
+            # 调整形状以计算区域内注意力
+            h_q = h_q.permute(0, 3, 1, 2).contiguous().view(batch_size*width, -1, area_h)
+            h_k = h_k.permute(0, 3, 1, 2).contiguous().view(batch_size*width, -1, area_h)
+            h_v = h_v.permute(0, 3, 1, 2).contiguous().view(batch_size*width, channels, area_h)
             
-            # 调整形状以计算区域内注意力: B x W x (C//8) x area_h
-            h_query = h_query.permute(0, 3, 1, 2).contiguous().view(batch_size*width, -1, area_h)
-            h_key = h_key.permute(0, 3, 1, 2).contiguous().view(batch_size*width, -1, area_h)
-            
-            # 计算注意力分数: B*W x area_h x area_h
-            h_attn = torch.bmm(h_query.transpose(1, 2), h_key)
+            # 使用矩阵乘法计算注意力
+            h_attn = torch.bmm(h_q.transpose(1, 2), h_k)
             h_attn = F.softmax(h_attn, dim=2)
             
-            # 调整值的形状: B*W x C x area_h
-            h_value = h_value.permute(0, 3, 1, 2).contiguous().view(batch_size*width, channels, area_h)
-            
-            # 应用注意力权重: B*W x C x area_h
-            h_out = torch.bmm(h_value, h_attn)
-            
-            # 重塑回原始维度: B x C x area_h x W
+            # 应用注意力
+            h_out = torch.bmm(h_v, h_attn)
             h_out = h_out.view(batch_size, width, channels, area_h).permute(0, 2, 3, 1)
-            area_h_outs.append(h_out)
-            
-            h_start += self.area_width
+            h_outs.append(h_out)
         
-        # 合并所有水平区域输出
-        h_out = torch.cat(area_h_outs, dim=2)
+        # 合并所有区域输出
+        h_out = torch.cat(h_outs, dim=2)
         
-        # 垂直区域注意力（多列）
-        v_start = 0
-        v_out = 0
-        area_v_outs = []
+        # 垂直方向区域注意力
+        v_queries = []
+        v_keys = []
+        v_values = []
+        v_sizes = []
         
-        # 对每个垂直区域计算注意力
-        while v_start < width:
+        for i in range(num_w_areas):
+            v_start = i * self.area_width
             v_end = min(v_start + self.area_width, width)
             area_w = v_end - v_start
+            v_sizes.append(area_w)
             
-            # 提取当前垂直区域的特征
-            v_query = proj_query[:, :, :, v_start:v_end]  # B x (C//8) x H x area_w
-            v_key = proj_key[:, :, :, v_start:v_end]      # B x (C//8) x H x area_w
-            v_value = proj_value[:, :, :, v_start:v_end]  # B x C x H x area_w
+            # 一次性提取所有区域特征
+            v_queries.append(proj_query[:, :, :, v_start:v_end])
+            v_keys.append(proj_key[:, :, :, v_start:v_end])
+            v_values.append(proj_value[:, :, :, v_start:v_end])
             
-            # 调整形状以计算区域内注意力: B x H x (C//8) x area_w
-            v_query = v_query.permute(0, 2, 1, 3).contiguous().view(batch_size*height, -1, area_w)
-            v_key = v_key.permute(0, 2, 1, 3).contiguous().view(batch_size*height, -1, area_w)
+        # 使用torch.stack一次性处理所有区域
+        v_outs = []
+        for i, (v_q, v_k, v_v, area_w) in enumerate(zip(v_queries, v_keys, v_values, v_sizes)):
+            # 调整形状以计算区域内注意力
+            v_q = v_q.permute(0, 2, 1, 3).contiguous().view(batch_size*height, -1, area_w)
+            v_k = v_k.permute(0, 2, 1, 3).contiguous().view(batch_size*height, -1, area_w)
+            v_v = v_v.permute(0, 2, 1, 3).contiguous().view(batch_size*height, channels, area_w)
             
-            # 计算注意力分数: B*H x area_w x area_w
-            v_attn = torch.bmm(v_query.transpose(1, 2), v_key)
+            # 使用矩阵乘法计算注意力
+            v_attn = torch.bmm(v_q.transpose(1, 2), v_k)
             v_attn = F.softmax(v_attn, dim=2)
             
-            # 调整值的形状: B*H x C x area_w
-            v_value = v_value.permute(0, 2, 1, 3).contiguous().view(batch_size*height, channels, area_w)
-            
-            # 应用注意力权重: B*H x C x area_w
-            v_out = torch.bmm(v_value, v_attn)
-            
-            # 重塑回原始维度: B x C x H x area_w
+            # 应用注意力
+            v_out = torch.bmm(v_v, v_attn)
             v_out = v_out.view(batch_size, height, channels, area_w).permute(0, 2, 1, 3)
-            area_v_outs.append(v_out)
+            v_outs.append(v_out)
             
-            v_start += self.area_width
+        # 合并所有区域输出
+        v_out = torch.cat(v_outs, dim=3)
         
-        # 合并所有垂直区域输出
-        v_out = torch.cat(area_v_outs, dim=3)
-        
-        # 合并结果并应用gamma参数
+        # 合并结果
         out = h_out + v_out
         out = self.gamma * out + x
         
