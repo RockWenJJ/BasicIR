@@ -16,6 +16,7 @@ from .ssduie_arch import SSDUIE, SSDNoWave, SSDNoHist
 from .waveresneth_arch import WaveResNetH
 from .lu2nethybrid_arch import LU2NetHybrid
 from .lusanet_arch import LUSANet
+from .lua2net_arch import LUA2Net
 
 
 # automatically scan and import arch modules
@@ -80,5 +81,6 @@ __all__ = [
     'WaveResNetH',
     'LU2NetHybrid',
     'LUSANet',
+    'LUA2Net',
     # ... other architectures ...
 ]
