@@ -177,7 +177,7 @@ class UnsImageRestorationModel(BaseModel):
         alpha = torch.clamp(alpha, 0.2, 0.8)
         # alpha = 0.5
         redeg_lq = self.lq * alpha + (1 - alpha) * clear * wb
-        new_clear, new_back, new_trans, new_wb = self.net_g(redeg_lq.detach())
+        n_clear, n_back, n_trans, n_wb = self.net_g(redeg_lq.detach())
 
         self.output = clear
 
@@ -188,9 +188,10 @@ class UnsImageRestorationModel(BaseModel):
         loss_dict['l_recon'] = l_recon
         total_loss += l_recon
 
+
         # The clear reconstruction loss for in-air images
         # clear reconstruction loss
-        l_air_clear = F.l1_loss(clear * wb * self.in_air_mask, self.lq * self.in_air_mask)
+        l_air_clear = F.l1_loss(clear * self.in_air_mask, self.lq * self.in_air_mask)
         if self.in_air_count > 0:
             l_air_clear = l_air_clear * self.lq.size(0) / self.in_air_count  # normalize by actual in-air image count
         loss_dict['l_air_clear'] = l_air_clear  # weight factor can be adjusted
@@ -208,24 +209,34 @@ class UnsImageRestorationModel(BaseModel):
         # loss_dict['l_air_back'] = l_air_back
         # total_loss += l_air_back
 
-        # alignment loss
+        ## alignment loss
         uw_mask = 1 - self.in_air_mask
         uw_count = self.lq.size(0) - self.in_air_count
-        # l_align_clear = F.l1_loss(clear * uw_mask , new_clear * uw_mask)
-        # if uw_count > 0:
-        #     l_align_clear = l_align_clear * self.lq.size(0) / uw_count
-        # loss_dict['l_align_clear'] = l_align_clear
-        # total_loss += l_align_clear
-        l_align_back = F.l1_loss(back * uw_mask, new_back * uw_mask)
+        # clear alignment loss
+        l_align_clear = F.l1_loss(clear * uw_mask , n_clear * uw_mask)
+        if uw_count > 0:
+            l_align_clear = l_align_clear * self.lq.size(0) / uw_count
+        loss_dict['l_align_clear'] = l_align_clear
+        total_loss += l_align_clear
+        # back alignment loss
+        l_align_back = F.l1_loss(back * uw_mask, n_back * uw_mask)
         if uw_count > 0:
             l_align_back = l_align_back * self.lq.size(0) / uw_count
         loss_dict['l_align_back'] = l_align_back
         total_loss += l_align_back
-        l_align_trans = F.l1_loss((trans * alpha + 1 - alpha) * uw_mask, new_trans * uw_mask)
+        # trans alignment loss
+        l_align_trans = F.l1_loss((trans * alpha + 1 - alpha) * uw_mask, n_trans * uw_mask)
         if uw_count > 0:    
             l_align_trans = l_align_trans * self.lq.size(0) / uw_count
         loss_dict['l_align_trans'] = l_align_trans
         total_loss += l_align_trans
+        # wb alignment loss
+        l_align_wb = F.l1_loss(wb * uw_mask, n_wb * uw_mask)
+        if uw_count > 0:
+            l_align_wb = l_align_wb * self.lq.size(0) / uw_count
+        loss_dict['l_align_wb'] = l_align_wb
+        total_loss += l_align_wb
+
 
         # uw_var_loss
         l_uw_var = self.uw_var_loss(trans, back, self.in_air_mask, self.in_air_count)

@@ -17,6 +17,7 @@ from .waveresneth_arch import WaveResNetH
 from .lu2nethybrid_arch import LU2NetHybrid
 from .lusanet_arch import LUSANet
 from .lua2net_arch import LUA2Net
+from .uienet import UIENet
 
 
 # automatically scan and import arch modules
@@ -82,5 +83,6 @@ __all__ = [
     'LU2NetHybrid',
     'LUSANet',
     'LUA2Net',
+    'UIENet',
     # ... other architectures ...
 ]
