@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torchvision.transforms import GaussianBlur
 
 class CrissCrossAttention(nn.Module):
     """Lightweight Criss-Cross Attention Module"""
@@ -260,6 +261,8 @@ class WhitePointBranch(nn.Module):
 class UIENet(nn.Module):
     def __init__(self, in_channels=3, out_channels=3, features=[24, 48, 96]):
         super(UIENet, self).__init__()
+
+        self.gaussian_blur = GaussianBlur(kernel_size=25, sigma=13)
         
         # Create four branches based on LUSANet
         # 1. Clear image branch (J0)
@@ -294,6 +297,7 @@ class UIENet(nn.Module):
         # Only compute other branches during training or if output_all_components is True
         if self.training or self.output_all_components:
             # Get backscatter (B)
+            # back = self.gaussian_blur(x)
             back = self.back_branch(x)
             back = self.normalize_output(back)
             

@@ -1,5 +1,5 @@
 import torch
-from basicir.models.archs.uienet import UIENet
+from basicir.models.archs.uienet_arch import UIENet
 
 def test_uienet():
     """Test the UIENet model"""

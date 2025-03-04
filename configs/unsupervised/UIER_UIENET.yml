@@ -10,7 +10,7 @@ datasets:
   train:
     name: TrainSet
     type: Dataset_UnpairedImage
-    dataroot_lq: [./datasets/uie_r/train/input, ./datasets/in-air]
+    dataroot_lq: [./datasets/uie_r/train/input] # [./datasets/uie_r/train/input, ./datasets/in-air]
     geometric_augs: true
 
     filename_tmpl: '{}'
@@ -19,7 +19,7 @@ datasets:
 
     # data loader
     use_shuffle: true
-    num_worker_per_gpu: 8
+    num_worker_per_gpu: 0
     batch_size_per_gpu: 8
 
     ### -------------Progressive training--------------------------
@@ -41,7 +41,7 @@ datasets:
 
 # network structures
 network_g:
-  type: UIENET
+  type: UIENet
 
 
 # path

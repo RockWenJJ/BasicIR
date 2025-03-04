@@ -124,12 +124,17 @@ if __name__ == "__main__":
                     restored = E.div_(W)
 
                 backscatter = backscatter * (1 - transmission)
-                reconstructed = restored * transmission * wb + backscatter
+                reconstructed = restored * transmission * wb[..., None, None] + backscatter
 
-                restored = normalize_image(restored) * wb
-                transmission = normalize_image(transmission)
-                backscatter = normalize_image(backscatter)
-                reconstructed = normalize_image(reconstructed)
+                # restored = normalize_image(restored)
+                # # restored_wb = normalize_image(restored * wb[..., None, None])
+                # transmission = normalize_image(transmission)
+                # backscatter = normalize_image(backscatter)
+                # reconstructed = normalize_image(reconstructed)
+                restored = torch.clamp(restored, 0, 1)
+                transmission = torch.clamp(transmission, 0, 1)
+                backscatter = torch.clamp(backscatter, 0, 1)
+                reconstructed = torch.clamp(reconstructed, 0, 1)
                 
                 # restored[:, 0, :, :] = (restored[:, 0, :, :] - restored[:, 0, :, :].min()) / (restored[:, 0, :, :].max() - restored[:, 0, :, :].min())
                 # restored[:, 1, :, :] = (restored[:, 1, :, :] - restored[:, 1, :, :].min()) / (restored[:, 1, :, :].max() - restored[:, 1, :, :].min())
@@ -153,16 +158,19 @@ if __name__ == "__main__":
 
                 # Unpad the output
                 restored = restored[:,:,:height,:width]
+                # restored_wb = restored_wb[:,:,:height,:width]
                 transmission = transmission[:,:,:height,:width]
                 backscatter = backscatter[:,:,:height,:width]
                 reconstructed = reconstructed[:,:,:height,:width]
 
                 restored = restored.permute(0, 2, 3, 1).cpu().detach().numpy()
+                # restored_wb = restored_wb.permute(0, 2, 3, 1).cpu().detach().numpy()
                 transmission = transmission.permute(0, 2, 3, 1).cpu().detach().numpy()
                 backscatter = backscatter.permute(0, 2, 3, 1).cpu().detach().numpy()
                 reconstructed = reconstructed.permute(0, 2, 3, 1).cpu().detach().numpy()
 
                 restored = img_as_ubyte(restored[0])
+                # restored_wb = img_as_ubyte(restored_wb[0])
                 transmission = img_as_ubyte(transmission[0])
                 backscatter = img_as_ubyte(backscatter[0])
                 reconstructed = img_as_ubyte(reconstructed[0])
@@ -170,13 +178,15 @@ if __name__ == "__main__":
                 f = os.path.splitext(os.path.split(file_)[-1])[0]
 
                 f = os.path.split(file_)[-1]
-                f_back = f + '_back.png'
-                f_trans = f + '_trans.png'
-                f_recon = f + '_recon.png'
+                f_back = f + '_back.jpg'
+                f_trans = f + '_trans.jpg'
+                f_recon = f + '_recon.jpg'
+                # f_restored_wb = f + '_restored_wb.jpg'
                 save_img(os.path.join(output_dir, f), restored)
                 save_img(os.path.join(output_dir, f_trans), transmission)
                 save_img(os.path.join(output_dir, f_back), backscatter)
                 save_img(os.path.join(output_dir, f_recon), reconstructed)
+                # save_img(os.path.join(output_dir, f_restored_wb), restored_wb)
             except Exception as e:
                 print(e)
 
