@@ -123,8 +123,7 @@ if __name__ == "__main__":
                             W[..., h_idx:(h_idx+tile), w_idx:(w_idx+tile)].add_(out_patch_mask)
                     restored = E.div_(W)
 
-                backscatter = backscatter * (1 - transmission)
-                reconstructed = restored * transmission * wb[..., None, None] + backscatter
+                reconstructed = restored * transmission + backscatter * (1 - transmission)
 
                 # restored = normalize_image(restored)
                 # # restored_wb = normalize_image(restored * wb[..., None, None])
@@ -133,28 +132,9 @@ if __name__ == "__main__":
                 # reconstructed = normalize_image(reconstructed)
                 restored = torch.clamp(restored, 0, 1)
                 transmission = torch.clamp(transmission, 0, 1)
-                backscatter = torch.clamp(backscatter, 0, 1)
+                backscatter = torch.clamp(backscatter, 0, 1) * torch.ones_like(restored)
                 reconstructed = torch.clamp(reconstructed, 0, 1)
                 
-                # restored[:, 0, :, :] = (restored[:, 0, :, :] - restored[:, 0, :, :].min()) / (restored[:, 0, :, :].max() - restored[:, 0, :, :].min())
-                # restored[:, 1, :, :] = (restored[:, 1, :, :] - restored[:, 1, :, :].min()) / (restored[:, 1, :, :].max() - restored[:, 1, :, :].min())
-                # restored[:, 2, :, :] = (restored[:, 2, :, :] - restored[:, 2, :, :].min()) / (restored[:, 2, :, :].max() - restored[:, 2, :, :].min())
-
-                # transmission[:, 0, :, :] = (transmission[:, 0, :, :] - transmission[:, 0, :, :].min()) / (transmission[:, 0, :, :].max() - transmission[:, 0, :, :].min())
-                # transmission[:, 1, :, :] = (transmission[:, 1, :, :] - transmission[:, 1, :, :].min()) / (transmission[:, 1, :, :].max() - transmission[:, 1, :, :].min())
-                # transmission[:, 2, :, :] = (transmission[:, 2, :, :] - transmission[:, 2, :, :].min()) / (transmission[:, 2, :, :].max() - transmission[:, 2, :, :].min())
-
-                # backscatter[:, 0, :, :] = (backscatter[:, 0, :, :] - backscatter[:, 0, :, :].min()) / (backscatter[:, 0, :, :].max() - backscatter[:, 0, :, :].min())
-                # backscatter[:, 1, :, :] = (backscatter[:, 1, :, :] - backscatter[:, 1, :, :].min()) / (backscatter[:, 1, :, :].max() - backscatter[:, 1, :, :].min())
-                # backscatter[:, 2, :, :] = (backscatter[:, 2, :, :] - backscatter[:, 2, :, :].min()) / (backscatter[:, 2, :, :].max() - backscatter[:, 2, :, :].min())
-
-                # # reconstruct
-                # reconstructed[:, 0, :, :] = (reconstructed[:, 0, :, :] - reconstructed[:, 0, :, :].min()) / (reconstructed[:, 0, :, :].max() - reconstructed[:, 0, :, :].min())
-                # reconstructed[:, 1, :, :] = (reconstructed[:, 1, :, :] - reconstructed[:, 1, :, :].min()) / (reconstructed[:, 1, :, :].max() - reconstructed[:, 1, :, :].min())
-                # reconstructed[:, 2, :, :] = (reconstructed[:, 2, :, :] - reconstructed[:, 2, :, :].min()) / (reconstructed[:, 2, :, :].max() - reconstructed[:, 2, :, :].min())
-
-                # transmission = torch.clamp(transmission, 0, 1)
-                # backscatter = torch.clamp(backscatter, 0, 1)
 
                 # Unpad the output
                 restored = restored[:,:,:height,:width]

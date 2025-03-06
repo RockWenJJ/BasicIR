@@ -51,6 +51,32 @@ class Mixing_Augment:
             augment = random.randint(0, len(self.augments)-1)
             target, input_ = self.augments[augment](target, input_)
         return target, input_
+    
+class L_TV(nn.Module):
+	def __init__(self):
+		super(L_TV,self).__init__()
+		pass
+
+	def forward(self,x):
+		batch_size, h_x, w_x = x.size()[0], x.size()[2], x.size()[3]
+		count_h, count_w = (h_x-1) * w_x, h_x * (w_x - 1)
+		h_tv = torch.pow((x[:,:,1:,:]-x[:,:,:h_x-1,:]),2).sum()
+		w_tv = torch.pow((x[:,:,:,1:]-x[:,:,:,:w_x-1]),2).sum()
+		return (h_tv/count_h+w_tv/count_w)/batch_size
+
+
+class L_color(nn.Module):
+	def __init__(self):
+		super(L_color, self).__init__()
+
+	def forward(self, x):
+		mean_rgb = torch.mean(x,[2,3],keepdim=True)
+		mr,mg, mb = torch.split(mean_rgb, 1, dim=1)
+		Drg = torch.pow(mr-mg,2)
+		Drb = torch.pow(mr-mb,2)
+		Dgb = torch.pow(mb-mg,2)
+		k = torch.sum(torch.pow(torch.pow(Drg,2) + torch.pow(Drb,2) + torch.pow(Dgb,2),0.5))
+		return k
 
 class UnsImageRestorationModel(BaseModel):
     """Base model for single image restoration."""
@@ -84,7 +110,11 @@ class UnsImageRestorationModel(BaseModel):
         self.cri_color_cast = ColorCastLoss()
         self.cri_saturated = SaturatedLoss()
         self.cri_ssim = SSIMLoss()
-        self.burn_in_iter = 1000
+        # self.cri_tv = L_TV()
+        self.cri_color = L_color()
+
+        self.burn_in_iter = 0
+        self.burn_in_iter_2 = 2000
 
     def init_training_settings(self):
         self.net_g.train()
@@ -176,17 +206,13 @@ class UnsImageRestorationModel(BaseModel):
 
         # get supervised back signal by gaussian blur (large kernel size) the input image
         kernel_size = self.lq.shape[2] // 2 + 1
-        sigma = kernel_size // 10
+        sigma = kernel_size // 5
 
         # Define the GaussianBlur transform
         gaussian_blur = GaussianBlur(kernel_size=kernel_size, sigma=sigma)
 
         # Apply the Gaussian blur to the tensor
-        # lq = self.lq.detach()
         supervised_back  = gaussian_blur(self.lq.detach())
-        # for _ in range(5):
-        #     lq = gaussian_blur(lq)
-        # supervised_back = lq
 
         # redgrade the image
         alpha = torch.rand(1).to(self.device)
@@ -195,6 +221,12 @@ class UnsImageRestorationModel(BaseModel):
         # redeg_lq = self.lq * alpha + (1 - alpha) * clear * wb[..., None, None]
         redeg_lq = self.lq * alpha + (1 - alpha) * clear
         n_clear, n_back, n_trans, n_wb = self.net_g(redeg_lq.detach())
+        # redeg_lq2 = clear * trans * alpha2 + (1 - alpha2) * back
+        alpha2 = torch.rand(1).to(self.device)
+        alpha2 = torch.clamp(alpha2, 0.2, 0.8)
+        redeg_lq2 = self.lq * alpha2 + (1 - alpha2) * back
+        n_clear2, n_back2, n_trans2, n_wb2 = self.net_g(redeg_lq2.detach())
+
 
         self.output = clear
 
@@ -202,66 +234,34 @@ class UnsImageRestorationModel(BaseModel):
         loss_dict = OrderedDict()
         # Reconstruction loss
         if current_iter > self.burn_in_iter:
-            l_recon = F.l1_loss(clear * trans  + back.detach() * (1 - trans), self.lq)
+            l_recon = F.l1_loss(clear * trans  + back * (1 - trans), self.lq) * 10
             # # replacing back with supervised_back, could achieve better results
             # l_recon = F.l1_loss(clear * trans  + supervised_back * (1 - trans), self.lq)
             loss_dict['l_recon'] = l_recon
             total_loss += l_recon
 
-
-        # # The clear reconstruction loss for in-air images
-        # # clear reconstruction loss
-        # l_air_clear = F.l1_loss(clear * self.in_air_mask, self.lq * self.in_air_mask)
-        # if self.in_air_count > 0:
-        #     l_air_clear = l_air_clear * self.lq.size(0) / self.in_air_count  # normalize by actual in-air image count
-        # loss_dict['l_air_clear'] = l_air_clear  # weight factor can be adjusted
-        # total_loss += l_air_clear
-        # # trans reconstruction loss
-        # l_air_trans = F.l1_loss(trans * self.in_air_mask, torch.ones_like(trans) * self.in_air_mask)
-        # if self.in_air_count > 0:
-        #     l_air_trans = l_air_trans * self.lq.size(0) / self.in_air_count  # normalize by actual in-air image count
-        # loss_dict['l_air_trans'] = l_air_trans
-        # total_loss += l_air_trans
-        # # # back reconstruction loss
-        # # l_air_back = F.l1_loss(back * self.in_air_mask, torch.zeros_like(back) * self.in_air_mask)
-        # # if self.in_air_count > 0:
-        # #     l_air_back = l_air_back * self.lq.size(0) / self.in_air_count  # normalize by actual in-air image count
-        # # loss_dict['l_air_back'] = l_air_back
-        # # total_loss += l_air_back
-
         ## alignment loss
         if current_iter > self.burn_in_iter:
-            uw_mask = 1 - self.in_air_mask
-            uw_count = self.lq.size(0) - self.in_air_count
             # clear alignment loss
-            l_align_clear = F.l1_loss(clear * uw_mask , n_clear * uw_mask)
-            # if uw_count > 0:
-            #     l_align_clear = l_align_clear * self.lq.size(0) / uw_count
+            l_align_clear = F.l1_loss(clear, n_clear)
             loss_dict['l_align_clear'] = l_align_clear
             total_loss += l_align_clear
-            # # back alignment loss
-            # l_align_back = F.l1_loss(back * uw_mask, n_back * uw_mask)
-            # if uw_count > 0:
-            #     l_align_back = l_align_back * self.lq.size(0) / uw_count
-            # loss_dict['l_align_back'] = l_align_back
-            # total_loss += l_align_back
-            # trans alignment loss
-            l_align_trans = F.l1_loss((trans * alpha + 1 - alpha) * uw_mask, n_trans * uw_mask)
-            # if uw_count > 0:    
-            #     l_align_trans = l_align_trans * self.lq.size(0) / uw_count
-            loss_dict['l_align_trans'] = l_align_trans
-            total_loss += l_align_trans
-            # # wb alignment loss
-            # l_align_wb = F.l1_loss(wb * uw_mask, n_wb * uw_mask)
-            # if uw_count > 0:
-            #     l_align_wb = l_align_wb * self.lq.size(0) / uw_count
-            # loss_dict['l_align_wb'] = l_align_wb
-            # total_loss += l_align_wb
+            l_align_clear2 = F.l1_loss(clear , n_clear2)
+            loss_dict['l_align_clear2'] = l_align_clear2
+            total_loss += l_align_clear2
+            # # trans alignment loss
+            # l_align_trans = F.l1_loss((trans * alpha + 1 - alpha), n_trans)
+            # loss_dict['l_align_trans'] = l_align_trans
+            # total_loss += l_align_trans
+            # l_align_trans2 = F.l1_loss((trans * alpha2), n_trans2)
+            # loss_dict['l_align_trans2'] = l_align_trans2
+            # total_loss += l_align_trans2
+        
 
-        # supervised back loss
-        l_back = F.l1_loss(back, supervised_back)
-        # if uw_count > 0:
-        #     l_back = l_back * self.lq.size(0) / uw_count
+        # supervised back loss - only compare RGB mean values
+        supervised_back_mean = torch.mean(supervised_back, dim=[2, 3])  # [B, C]
+        back_mean = torch.mean(back, dim=[2, 3])  # [B, C]
+        l_back = F.l1_loss(supervised_back_mean, back_mean)
         loss_dict['l_back'] = l_back
         total_loss += l_back
 
@@ -278,11 +278,17 @@ class UnsImageRestorationModel(BaseModel):
         # total_loss += l_uw_mean
 
         if current_iter > self.burn_in_iter:
-            # Gray-world assumption loss (only for underwater images)
-            clear_mean = torch.mean(clear, dim=[2, 3])  # [B, C]
-            gray_world_loss = torch.mean(torch.var(clear_mean, dim=1))  # Variance across channels [B]
-            loss_dict['l_gray'] = gray_world_loss
-            total_loss += gray_world_loss
+            # # Gray-world assumption loss (only for underwater images)
+            # clear_mean = torch.mean(clear, dim=[2, 3])  # [B, C]
+            # gray_world_loss = torch.mean(torch.var(clear_mean, dim=1))  * 10 # Variance across channels [B]
+            # loss_dict['l_gray'] = gray_world_loss
+            # total_loss += gray_world_loss
+            # l_tv = self.cri_tv(clear)
+            # loss_dict['l_tv'] = l_tv
+            # total_loss += l_tv
+            l_color = self.cri_color(clear) * 10
+            loss_dict['l_color'] = l_color
+            total_loss += l_color
 
         # # Apply mask and normalize
         # gray_world_loss = torch.sum(gray_world_loss * (1 - self.in_air_mask.reshape(-1))) 

@@ -262,14 +262,14 @@ class UIENet(nn.Module):
     def __init__(self, in_channels=3, out_channels=3, features=[24, 48, 96]):
         super(UIENet, self).__init__()
 
-        self.gaussian_blur = GaussianBlur(kernel_size=25, sigma=13)
+        self.gaussian_blur = GaussianBlur(kernel_size=127, sigma=127)
         
         # Create four branches based on LUSANet
         # 1. Clear image branch (J0)
         self.clear_branch = BranchNet(in_channels, out_channels, features)
         
         # 2. Backscatter branch (B)
-        self.back_branch = BranchNet(in_channels, out_channels, features)
+        self.back_branch = BranchNet(in_channels, out_channels, features) #WhitePointBranch(in_channels, features)
         
         # 3. Transmission branch (T)
         self.trans_branch = BranchNet(in_channels, out_channels, features)
@@ -279,36 +279,41 @@ class UIENet(nn.Module):
         
         # Flag for testing vs training mode
         self.output_all_components = False
+
+        self.clip_output = nn.Sigmoid() #nn.Hardtanh(min_val=0.0, max_val=1.0)
+
     
-    def normalize_output(self, x):
-        # Normalize output to be in reasonable range without using sigmoid
-        x_min = x.min(dim=1, keepdim=True)[0].min(dim=2, keepdim=True)[0].min(dim=3, keepdim=True)[0]
-        x_max = x.max(dim=1, keepdim=True)[0].max(dim=2, keepdim=True)[0].max(dim=3, keepdim=True)[0]
+    # def normalize_output(self, x):
+    #     # Normalize output to be in reasonable range without using sigmoid
+    #     x_min = x.min(dim=1, keepdim=True)[0].min(dim=2, keepdim=True)[0].min(dim=3, keepdim=True)[0]
+    #     x_max = x.max(dim=1, keepdim=True)[0].max(dim=2, keepdim=True)[0].max(dim=3, keepdim=True)[0]
         
-        # Add small epsilon to avoid division by zero
-        x = (x - x_min) / (x_max - x_min + 1e-8)
-        return x
+    #     # Add small epsilon to avoid division by zero
+    #     x = (x - x_min) / (x_max - x_min + 1e-8)
+    #     return x
+    
     
     def forward(self, x):
         # Get clear image (J0)
         clear = self.clear_branch(x)
-        clear = self.normalize_output(clear)
+        # clear = self.normalize_output(clear)
+        clear = self.clip_output(clear)
         
         # Only compute other branches during training or if output_all_components is True
         if self.training or self.output_all_components:
             # Get backscatter (B)
-            # back = self.gaussian_blur(x)
-            back = self.back_branch(x)
-            back = self.normalize_output(back)
-            
+            back = self.gaussian_blur(x)
+            back = self.back_branch(back)
+            # back = self.normalize_output(back)
+            back = self.clip_output(back)
             # Get transmission (T)
             trans = self.trans_branch(x)
-            trans = self.normalize_output(trans)
-            
+            # trans = self.normalize_output(trans)
+            trans = self.clip_output(trans)
             # Get white point (W)
             white = self.white_branch(x)  # Shape: B x 3 x 1 x 1
             white = white.squeeze(-1).squeeze(-1)  # Shape: B x 3
-            white = F.relu(white)  # Ensure positive values
+            white = self.clip_output(white)
             
             return clear, back, trans, white
         else:
