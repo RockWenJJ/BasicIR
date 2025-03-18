@@ -9,8 +9,9 @@ manual_seed: 100
 datasets:
   train:
     name: TrainSet
-    type: Dataset_UnpairedImage
+    type: Dataset_PairedImage
     dataroot_lq: [./datasets/uie_r/train/input] # [./datasets/uie_r/train/input, ./datasets/in-air]
+    dataroot_gt: [./datasets/uie_r/train/target]
     geometric_augs: true
 
     filename_tmpl: '{}'

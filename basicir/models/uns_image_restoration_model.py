@@ -113,6 +113,16 @@ class UnsImageRestorationModel(BaseModel):
         # self.cri_tv = L_TV()
         self.cri_color = L_color()
 
+        # Initialize VGG network for perceptual losses
+        if self.is_train and opt.get('use_vgg_loss', False):
+            from torchvision.models import vgg16, VGG16_Weights
+            self.vgg = vgg16(weights=VGG16_Weights.IMAGENET1K_V1).features[:23].eval()
+            for param in self.vgg.parameters():
+                param.requires_grad = False
+            self.vgg = self.model_to_device(self.vgg)
+            self.register_buffer('vgg_mean', torch.Tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+            self.register_buffer('vgg_std', torch.Tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+
         self.burn_in_iter = 0
         self.burn_in_iter_2 = 2000
 
@@ -139,6 +149,21 @@ class UnsImageRestorationModel(BaseModel):
             else:
                 self.model_ema(0)  # copy net_g weight
             self.net_g_ema.eval()
+
+        # Initialize perceptual loss if needed
+        perceptual_opt = train_opt.get('perceptual', None)
+        if perceptual_opt is not None and perceptual_opt.get('use_perceptual', False):
+            from basicir.models.losses import PerceptualLoss
+            self.cri_perceptual = PerceptualLoss(
+                layer_weights=perceptual_opt.get('layer_weights', {'conv4_3': 1.0}),
+                vgg_type=perceptual_opt.get('vgg_type', 'vgg16'),
+                use_input_norm=perceptual_opt.get('use_input_norm', True),
+                range_norm=perceptual_opt.get('range_norm', False),
+                loss_weight=perceptual_opt.get('loss_weight', 1.0),
+                criterion=perceptual_opt.get('criterion', 'l1')
+            ).to(self.device)
+            logger = get_root_logger()
+            logger.info(f'Use perceptual loss with config: {perceptual_opt}')
 
         # define losses
         if train_opt.get('loss_opt'):
@@ -199,14 +224,16 @@ class UnsImageRestorationModel(BaseModel):
                 self.in_air_count += 1
         if 'gt' in data:
             self.gt = data['gt'].to(self.device)
+        else:
+            self.gt = None
 
     def optimize_parameters(self, current_iter):
         self.optimizer_g.zero_grad()
         clear, back, trans, wb = self.net_g(self.lq)
 
         # get supervised back signal by gaussian blur (large kernel size) the input image
-        kernel_size = self.lq.shape[2] // 2 + 1
-        sigma = kernel_size // 5
+        kernel_size = 127 #self.lq.shape[2] // 2 + 1
+        sigma = 127 #kernel_size // 5
 
         # Define the GaussianBlur transform
         gaussian_blur = GaussianBlur(kernel_size=kernel_size, sigma=sigma)
@@ -234,7 +261,7 @@ class UnsImageRestorationModel(BaseModel):
         loss_dict = OrderedDict()
         # Reconstruction loss
         if current_iter > self.burn_in_iter:
-            l_recon = F.l1_loss(clear * trans  + back * (1 - trans), self.lq) * 10
+            l_recon = F.l1_loss(clear * trans  + back.detach() * (1 - trans), self.lq) * 10
             # # replacing back with supervised_back, could achieve better results
             # l_recon = F.l1_loss(clear * trans  + supervised_back * (1 - trans), self.lq)
             loss_dict['l_recon'] = l_recon
@@ -243,27 +270,33 @@ class UnsImageRestorationModel(BaseModel):
         ## alignment loss
         if current_iter > self.burn_in_iter:
             # clear alignment loss
-            l_align_clear = F.l1_loss(clear, n_clear)
+            if self.gt is not None:
+                l_clear = F.l1_loss(clear, self.gt) * 10
+                loss_dict['l_clear'] = l_clear
+                total_loss += l_clear
+            l_align_clear = F.l1_loss(clear, n_clear) * 10
             loss_dict['l_align_clear'] = l_align_clear
             total_loss += l_align_clear
-            l_align_clear2 = F.l1_loss(clear , n_clear2)
-            loss_dict['l_align_clear2'] = l_align_clear2
-            total_loss += l_align_clear2
-            # # trans alignment loss
-            # l_align_trans = F.l1_loss((trans * alpha + 1 - alpha), n_trans)
-            # loss_dict['l_align_trans'] = l_align_trans
-            # total_loss += l_align_trans
+            # l_align_clear2 = F.l1_loss(clear , n_clear2)
+            # loss_dict['l_align_clear2'] = l_align_clear2
+            # total_loss += l_align_clear2
+            # trans alignment loss
+            l_align_trans = F.l1_loss((trans * alpha + 1 - alpha), n_trans) * 0.01
+            loss_dict['l_align_trans'] = l_align_trans
+            total_loss += l_align_trans
             # l_align_trans2 = F.l1_loss((trans * alpha2), n_trans2)
             # loss_dict['l_align_trans2'] = l_align_trans2
             # total_loss += l_align_trans2
         
 
-        # supervised back loss - only compare RGB mean values
-        supervised_back_mean = torch.mean(supervised_back, dim=[2, 3])  # [B, C]
-        back_mean = torch.mean(back, dim=[2, 3])  # [B, C]
-        l_back = F.l1_loss(supervised_back_mean, back_mean)
+        # # supervised back loss - only compare RGB mean values
+        # supervised_back_mean = torch.mean(supervised_back, dim=[2, 3])  # [B, C]
+        # back_mean = torch.mean(back, dim=[2, 3])  # [B, C]
+        l_back = F.l1_loss(supervised_back, back)
         loss_dict['l_back'] = l_back
         total_loss += l_back
+
+        # 
 
         
 
@@ -278,14 +311,14 @@ class UnsImageRestorationModel(BaseModel):
         # total_loss += l_uw_mean
 
         if current_iter > self.burn_in_iter:
-            # # Gray-world assumption loss (only for underwater images)
-            # clear_mean = torch.mean(clear, dim=[2, 3])  # [B, C]
-            # gray_world_loss = torch.mean(torch.var(clear_mean, dim=1))  * 10 # Variance across channels [B]
-            # loss_dict['l_gray'] = gray_world_loss
-            # total_loss += gray_world_loss
-            # l_tv = self.cri_tv(clear)
-            # loss_dict['l_tv'] = l_tv
-            # total_loss += l_tv
+        #     # # Gray-world assumption loss (only for underwater images)
+        #     # clear_mean = torch.mean(clear, dim=[2, 3])  # [B, C]
+        #     # gray_world_loss = torch.mean(torch.var(clear_mean, dim=1))  * 10 # Variance across channels [B]
+        #     # loss_dict['l_gray'] = gray_world_loss
+        #     # total_loss += gray_world_loss
+        #     # l_tv = self.cri_tv(clear)
+        #     # loss_dict['l_tv'] = l_tv
+        #     # total_loss += l_tv
             l_color = self.cri_color(clear) * 10
             loss_dict['l_color'] = l_color
             total_loss += l_color
@@ -307,6 +340,16 @@ class UnsImageRestorationModel(BaseModel):
         # l_grad = self.gradient_sharpness_ranking_loss(clear, self.lq.detach())
         # loss_dict['l_grad'] = l_grad
         # total_loss += l_grad
+
+        # Add grayscale triplet contrastive loss
+        l_gray_triplet = self.grayscale_triplet_loss(clear, self.lq, trans, margin=0.5)
+        loss_dict['l_gray_triplet'] = l_gray_triplet
+        total_loss += l_gray_triplet
+        
+        # Add VGG triplet contrastive loss
+        l_vgg_triplet = self.vgg_triplet_loss(clear, self.lq, trans, margin=0.5)
+        loss_dict['l_vgg_triplet'] = l_vgg_triplet
+        total_loss += l_vgg_triplet
 
         loss_dict['total_loss'] = total_loss
 
@@ -448,6 +491,105 @@ class UnsImageRestorationModel(BaseModel):
         loss = torch.relu(margin + mean_grad2 - mean_grad1)
         return loss
 
+    def grayscale_triplet_loss(self, anchor, positive, negative, margin=1.0):
+        """
+        Compute triplet contrastive loss on grayscale images.
+        Args:
+            anchor: tensor of shape [B, 3, H, W]
+            positive: tensor of shape [B, 3, H, W]
+            negative: tensor of shape [B, 3, H, W]
+            margin: minimum distance between positive and negative
+        Returns:
+            loss: triplet loss value
+        """
+        # Convert RGB images to grayscale
+        # Using standard coefficients: 0.299R + 0.587G + 0.114B
+        gray_anchor = 0.299 * anchor[:, 0:1] + 0.587 * anchor[:, 1:2] + 0.114 * anchor[:, 2:3]
+        gray_positive = 0.299 * positive[:, 0:1] + 0.587 * positive[:, 1:2] + 0.114 * positive[:, 2:3]
+        gray_negative = 0.299 * negative[:, 0:1] + 0.587 * negative[:, 1:2] + 0.114 * negative[:, 2:3]
+        
+        # Flatten the spatial dimensions
+        gray_anchor = gray_anchor.view(gray_anchor.size(0), -1)
+        gray_positive = gray_positive.view(gray_positive.size(0), -1)
+        gray_negative = gray_negative.view(gray_negative.size(0), -1)
+        
+        # Compute distances
+        pos_dist = F.mse_loss(gray_anchor, gray_positive, reduction='none').sum(dim=1)
+        neg_dist = F.mse_loss(gray_anchor, gray_negative, reduction='none').sum(dim=1)
+        
+        # Triplet loss - using softplus instead of clamp for a smoother, always active loss
+        # This will always provide gradients, even when the constraint is satisfied
+        # loss = torch.log(1 + torch.exp(pos_dist - neg_dist + margin))
+        loss = pos_dist / (neg_dist + margin)
+        
+        return loss.mean()
+
+    def vgg_triplet_loss(self, anchor, positive, negative, margin=1.0):
+        """
+        Compute triplet contrastive loss using VGG features.
+        Args:
+            anchor: tensor of shape [B, 3, H, W]
+            positive: tensor of shape [B, 3, H, W]
+            negative: tensor of shape [B, 3, H, W]
+            margin: minimum distance between positive and negative
+        Returns:
+            loss: triplet loss value
+        """
+        # Convert RGB images to grayscale
+        # Using standard coefficients: 0.299R + 0.587G + 0.114B
+        gray_anchor = 0.299 * anchor[:, 0:1] + 0.587 * anchor[:, 1:2] + 0.114 * anchor[:, 2:3]
+        gray_positive = 0.299 * positive[:, 0:1] + 0.587 * positive[:, 1:2] + 0.114 * positive[:, 2:3]
+        gray_negative = 0.299 * negative[:, 0:1] + 0.587 * negative[:, 1:2] + 0.114 * negative[:, 2:3]
+        
+        # Repeat grayscale channel to make 3-channel input for VGG
+        gray_anchor = gray_anchor.repeat(1, 3, 1, 1)
+        gray_positive = gray_positive.repeat(1, 3, 1, 1)
+        gray_negative = gray_negative.repeat(1, 3, 1, 1)
+        
+        # Get VGG features
+        if not hasattr(self, 'vgg') or self.vgg is None:
+            # Use perceptual loss network if available, otherwise initialize VGG
+            if hasattr(self, 'cri_perceptual') and self.cri_perceptual is not None:
+                vgg_anchor = self.cri_perceptual.vgg(gray_anchor)
+                vgg_positive = self.cri_perceptual.vgg(gray_positive)
+                vgg_negative = self.cri_perceptual.vgg(gray_negative)
+            else:
+                # If no VGG network is available, fall back to grayscale triplet loss
+                return self.grayscale_triplet_loss(anchor, positive, negative, margin)
+        else:
+            # Preprocess images for VGG
+            gray_anchor = self.preprocess_vgg(gray_anchor)
+            gray_positive = self.preprocess_vgg(gray_positive)
+            gray_negative = self.preprocess_vgg(gray_negative)
+            
+            vgg_anchor = self.vgg(gray_anchor)
+            vgg_positive = self.vgg(gray_positive)
+            vgg_negative = self.vgg(gray_negative)
+        
+        # Compute distances in VGG feature space
+        pos_dist = F.mse_loss(vgg_anchor, vgg_positive, reduction='none').sum(dim=1)
+        neg_dist = F.mse_loss(vgg_anchor, vgg_negative, reduction='none').sum(dim=1)
+        
+        # Triplet loss - using softplus for a smoother, always active loss
+        loss = torch.log(1 + torch.exp(pos_dist - neg_dist + margin))
+        
+        return loss.mean()
+        
+    def preprocess_vgg(self, img):
+        """
+        Preprocess an image to match VGG expected input format
+        Args:
+            img (tensor): Image of shape [B, 3, H, W] in range [0, 1]
+        
+        Returns:
+            tensor: Normalized image for VGG
+        """
+        # VGG expects normalized images based on ImageNet stats
+        if hasattr(self, 'vgg_mean') and hasattr(self, 'vgg_std'):
+            return (img - self.vgg_mean) / self.vgg_std
+        else:
+            # Fallback normalization if buffers aren't registered
+            return (img - 0.5) / 0.5
 
     def pad_test(self, window_size):        
         scale = self.opt.get('scale', 1)

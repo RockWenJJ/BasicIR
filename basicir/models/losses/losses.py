@@ -218,3 +218,114 @@ class ReconstructionLoss(nn.Module):
         elif self.reduction == 'sum':
             loss = F.l1_loss(I_hat, target, reduction='none')
         return loss
+
+
+class PerceptualLoss(nn.Module):
+    """Perceptual loss using VGG16 features.
+    
+    Args:
+        layer_weights (dict): Weights for different VGG feature layers.
+        vgg_type (str): Type of VGG network to use, only 'vgg16' is supported for now.
+        use_input_norm (bool): Whether to normalize input using ImageNet mean and std.
+        range_norm (bool): Whether to normalize input to range [0, 1].
+        loss_weight (float): Loss weight for perceptual loss.
+        criterion (str): Criterion for computing perceptual loss. Default: 'l1'.
+    """
+    
+    def __init__(self,
+                 layer_weights={'conv4_3': 1.0},
+                 vgg_type='vgg16',
+                 use_input_norm=True,
+                 range_norm=False,
+                 loss_weight=1.0,
+                 criterion='l1'):
+        super(PerceptualLoss, self).__init__()
+        self.layer_weights = layer_weights
+        self.vgg_type = vgg_type
+        self.use_input_norm = use_input_norm
+        self.range_norm = range_norm
+        self.loss_weight = loss_weight
+        self.criterion = criterion
+        
+        # Initialize VGG network
+        from torchvision import models
+        
+        # VGG16
+        vgg = models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1)
+        
+        # Get the VGG features
+        self.vgg_features = vgg.features
+        self.vgg_features.eval()
+        for param in self.vgg_features.parameters():
+            param.requires_grad = False
+        
+        # Layer name -> layer index mapping (for VGG16)
+        self.layer_mapping = {
+            'conv1_1': 0, 'relu1_1': 1, 'conv1_2': 2, 'relu1_2': 3, 'pool1': 4,
+            'conv2_1': 5, 'relu2_1': 6, 'conv2_2': 7, 'relu2_2': 8, 'pool2': 9,
+            'conv3_1': 10, 'relu3_1': 11, 'conv3_2': 12, 'relu3_2': 13, 'conv3_3': 14, 'relu3_3': 15, 'pool3': 16,
+            'conv4_1': 17, 'relu4_1': 18, 'conv4_2': 19, 'relu4_2': 20, 'conv4_3': 21, 'relu4_3': 22, 'pool4': 23,
+            'conv5_1': 24, 'relu5_1': 25, 'conv5_2': 26, 'relu5_2': 27, 'conv5_3': 28, 'relu5_3': 29, 'pool5': 30
+        }
+        
+        # Define normalization using ImageNet mean and std
+        if self.use_input_norm:
+            self.register_buffer('mean', torch.Tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+            self.register_buffer('std', torch.Tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+    
+    def forward(self, x, gt):
+        """
+        Args:
+            x (Tensor): Input tensor with shape (N, C, H, W).
+            gt (Tensor): Ground truth tensor with shape (N, C, H, W).
+            
+        Returns:
+            Tensor: Perceptual loss.
+        """
+        # Normalize input to [0, 1] if needed
+        if self.range_norm:
+            x = (x + 1) / 2
+            gt = (gt + 1) / 2
+        
+        # Apply ImageNet normalization if needed
+        if self.use_input_norm:
+            x = (x - self.mean) / self.std
+            gt = (gt - self.mean) / self.std
+        
+        # Get VGG features
+        x_features = self.extract_features(x)
+        gt_features = self.extract_features(gt)
+        
+        # Compute perceptual loss
+        loss = 0
+        for layer_name, weight in self.layer_weights.items():
+            layer_idx = self.layer_mapping[layer_name]
+            x_feat = x_features[layer_idx]
+            gt_feat = gt_features[layer_idx]
+            
+            if self.criterion == 'l1':
+                layer_loss = F.l1_loss(x_feat, gt_feat)
+            elif self.criterion == 'l2' or self.criterion == 'mse':
+                layer_loss = F.mse_loss(x_feat, gt_feat)
+            else:
+                raise ValueError(f'Unsupported criterion: {self.criterion}')
+            
+            loss += weight * layer_loss
+        
+        return self.loss_weight * loss
+    
+    def extract_features(self, x):
+        """Extract VGG features.
+        
+        Args:
+            x (Tensor): Input tensor with shape (N, C, H, W).
+            
+        Returns:
+            dict: Extracted VGG features.
+        """
+        features = []
+        for i, layer in enumerate(self.vgg_features):
+            x = layer(x)
+            features.append(x)
+        
+        return features

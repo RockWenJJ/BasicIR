@@ -302,8 +302,8 @@ class UIENet(nn.Module):
         # Only compute other branches during training or if output_all_components is True
         if self.training or self.output_all_components:
             # Get backscatter (B)
-            back = self.gaussian_blur(x)
-            back = self.back_branch(back)
+            # back = self.gaussian_blur(x)
+            back = self.back_branch(x)
             # back = self.normalize_output(back)
             back = self.clip_output(back)
             # Get transmission (T)
