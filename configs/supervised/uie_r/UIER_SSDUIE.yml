@@ -1,5 +1,5 @@
 # general settings
-name: UIER_LU2NetHybrid
+name: UIER_SSDUIE
 model_type: ImageRestorationModel
 scale: 1
 num_gpu: 1  # set num_gpu: 0 for cpu mode
@@ -24,7 +24,7 @@ datasets:
     batch_size_per_gpu: 8
 
     ### -------------Progressive training--------------------------
-    mini_batch_sizes: [8,8,6,6,6,4]             # Batch size per gpu   
+    mini_batch_sizes: [4,4,2,2,2,1]             # Batch size per gpu   
     iters: [62000,14000,8000,6000,6000,4000]
     gt_size: 384   # Max patch size for progressive training
     gt_sizes: [128,160,192,256,320,384]  # Patch sizes for progressive training.
@@ -42,7 +42,7 @@ datasets:
 
 # network structures
 network_g:
-  type: LU2NetHybrid
+  type: SSDUIE
 
 
 # path
@@ -108,8 +108,8 @@ logger:
   save_checkpoint_freq: !!float 4e3
   use_tb_logger: true
   wandb:
-    project: UIE-UIER
-    wandb_run_name: LU2NetHybrid
+    project: UIE-Real
+    wandb_run_name: SSDUIE
     resume_id: ~
 
 # dist training settings
