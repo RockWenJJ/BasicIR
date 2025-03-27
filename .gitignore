@@ -133,3 +133,4 @@ results/
 *.pdf
 
 wandb/*
+wandb
