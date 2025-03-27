@@ -16,6 +16,7 @@ from .ssduie_arch import SSDUIE, SSDNoWave, SSDNoHist
 from .waveresneth_arch import WaveResNetH
 from .lu2nethybrid_arch import LU2NetHybrid
 from .lusanet_arch import LUSANet
+from .lusanetablation_arch import LUSANetAblation, LUSANetDilatedConv
 from .lua2net_arch import LUA2Net
 from .uienet_arch import UIENet
 
@@ -84,5 +85,7 @@ __all__ = [
     'LUSANet',
     'LUA2Net',
     'UIENet',
+    'LUSANetAblation',
+    'LUSANetDilatedConv'
     # ... other architectures ...
 ]

@@ -91,28 +91,6 @@ class LUSANet(nn.Module):
         
         return self.out_conv(x)
 
-# 浅层编码器块 (axial_conv + norm + ca)
-class ShallowEncoderBlock(nn.Module):
-    def __init__(self, in_c, out_c):
-        super().__init__()
-        # 轴向卷积
-        self.axial_conv = AxialDepthwiseConv(in_c, out_c)
-        
-        # 混合归一化
-        self.norm = HybridNormalization(out_c)
-        
-        # 通道注意力
-        self.ca = CALayer(out_c)
-        
-        # 下采样
-        self.down = nn.MaxPool2d(kernel_size=2, stride=2)
-
-    def forward(self, x):
-        x = self.axial_conv(x)
-        x = self.norm(x)
-        x = self.ca(x)
-        return x, self.down(x)
-
 # 深层编码器块 (axial_conv + CrissCrossAttention)
 class DeepEncoderBlock(nn.Module):
     def __init__(self, in_c, out_c):
@@ -161,39 +139,6 @@ class DeepDecoderBlock(nn.Module):
         x = self.conv1(x)
         x = self.axial(x)
         x = self.cc_attn(x)
-        x = self.conv2(self.relu(x))
-        return self.relu(x)
-
-# 浅层解码器块 (upsample + axial_conv + CA) - 与浅层编码器对称
-class ShallowDecoderBlock(nn.Module):
-    def __init__(self, in_c, out_c):
-        super().__init__()
-        # 上采样
-        self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        
-        # 特征融合
-        self.conv1 = nn.Conv2d(in_c * 2, in_c, 1)
-        
-        # 轴向卷积
-        self.axial = AxialDepthwiseConv(in_c, out_c)
-        
-        # 混合归一化
-        self.norm = HybridNormalization(out_c)
-        
-        # 通道注意力
-        self.ca = CALayer(out_c)
-        
-        # 最终卷积
-        self.conv2 = nn.Conv2d(out_c, out_c, 1)
-        self.relu = nn.ReLU(inplace=False)
-
-    def forward(self, skip, x):
-        x = self.up(x)
-        x = torch.cat([skip, x], dim=1)
-        x = self.conv1(x)
-        x = self.axial(x)
-        x = self.norm(x)
-        x = self.ca(x)
         x = self.conv2(self.relu(x))
         return self.relu(x)
 

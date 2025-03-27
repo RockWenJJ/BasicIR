@@ -1,5 +1,5 @@
 # general settings
-name: UIER_LUSANet
+name: UIEB_LUSANet_Vanilla
 model_type: ImageRestorationModel
 scale: 1
 num_gpu: 1  # set num_gpu: 0 for cpu mode
@@ -10,8 +10,8 @@ datasets:
   train:
     name: TrainSet
     type: Dataset_PairedImage
-    dataroot_gt: [./datasets/uie_r/target/train]
-    dataroot_lq: [./datasets/uie_r/input/train]
+    dataroot_gt: [./datasets/uieb/target/train]
+    dataroot_lq: [./datasets/uieb/input/train]
     geometric_augs: true
 
     filename_tmpl: '{}'
@@ -24,7 +24,7 @@ datasets:
     batch_size_per_gpu: 8
 
     ### -------------Progressive training--------------------------
-    mini_batch_sizes: [8,8,6,6,6,4]             # Batch size per gpu   
+    mini_batch_sizes: [4,4,2,2,1,1]             # Batch size per gpu   
     iters: [62000,14000,8000,6000,6000,4000]
     gt_size: 384   # Max patch size for progressive training
     gt_sizes: [128,160,192,256,320,384]  # Patch sizes for progressive training.
@@ -35,14 +35,19 @@ datasets:
   val:
     name: ValSet
     type: Dataset_PairedImage
-    dataroot_gt: [./datasets/uie_r/target/val]
-    dataroot_lq: [./datasets/uie_r/input/val]
+    dataroot_gt: [./datasets/uieb/target/val]
+    dataroot_lq: [./datasets/uieb/input/val]
     io_backend:
       type: disk
 
 # network structures
 network_g:
-  type: LUSANet
+  type: LUSANetAblation
+  use_axial: false
+  use_hybrid_norm: false
+  use_cc_attn: false
+  use_improved_bottleneck: false
+  use_ca: false
 
 
 # path
@@ -108,8 +113,8 @@ logger:
   save_checkpoint_freq: !!float 4e3
   use_tb_logger: true
   wandb:
-    project: UIE-Real
-    wandb_run_name: LUSANet
+    project: UIEB-LUSANet-Ablation
+    wandb_run_name: Vanilla
     resume_id: ~
 
 # dist training settings
